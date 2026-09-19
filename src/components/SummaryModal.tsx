@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CallSessionRecord, CallSummary } from '../types';
 import { exportSessionToTxt, downloadFile } from '../services/sessionStorage';
+import { getCategoryLabel, getMetricLabel, getObjectionLabel, isRealObjection } from '../utils/labels';
 
 interface SummaryModalProps {
   isOpen: boolean;
@@ -211,8 +212,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                           className="bg-stone-50 border border-stone-200 rounded-lg p-2.5 text-xs"
                         >
                           <div className="flex items-center justify-between text-[11px] text-stone-500 mb-0.5">
-                            <span className="font-medium text-teal-800 uppercase tracking-wider text-[10px]">
-                              {fact.label || fact.category || 'Факт'}
+                            <span className="font-semibold text-teal-800 uppercase tracking-wider text-[10px]">
+                              {fact.label || getCategoryLabel(fact.category) || getMetricLabel(fact.category) || fact.category || 'Факт'}
                             </span>
                             {fact.turnId && (
                               <span className="font-mono text-[10px]">#{fact.turnId.slice(-4)}</span>
@@ -316,19 +317,23 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   </div>
                 )}
 
-                {summary.objections?.length > 0 && (
-                  <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3">
-                    <div className="flex items-center space-x-1.5 font-semibold text-amber-900 text-xs mb-2">
-                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Возражения и сомнения:</span>
+                {(() => {
+                  const realObjs = (summary.objections || []).filter(isRealObjection);
+                  if (realObjs.length === 0) return null;
+                  return (
+                    <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3">
+                      <div className="flex items-center space-x-1.5 font-semibold text-amber-900 text-xs mb-2">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Возражения и сомнения:</span>
+                      </div>
+                      <ul className="space-y-1 text-xs text-amber-950 list-disc list-inside">
+                        {realObjs.map((o, idx) => (
+                          <li key={idx}>{getObjectionLabel(o)}</li>
+                        ))}
+                      </ul>
                     </div>
-                    <ul className="space-y-1 text-xs text-amber-950 list-disc list-inside">
-                      {summary.objections.map((o, idx) => (
-                        <li key={idx}>{o}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Andrei OS Professional Review: Strong Point & Specific Improvement */}

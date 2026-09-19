@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { ConversationState, FactEntry, FirstCallMetric } from '../types';
 import { FIRST_CALL_METRICS_LIST } from '../services/firstCallScriptEngine';
+import { getCategoryLabel, getMetricLabel, getObjectionLabel, isRealObjection } from '../utils/labels';
 
 const SCRIPT_METRIC_QUESTIONS: Record<string, string> = {
   trust: 'Как вообще сейчас ощущения от рынка в Сочи — давно присматриваетесь или только начали?',
@@ -391,6 +392,26 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
               'Под какую основную задачу подбираете недвижимость — для себя, отдыха или инвестиций?'
             )}
 
+            {/* 1a. Первичная цель (если разграничена) */}
+            {state.primaryGoal?.value && state.primaryGoal.value !== state.goal?.value && (
+              renderCompactField(
+                'Формат использования',
+                state.primaryGoal,
+                <Compass className="w-3.5 h-3.5 text-teal-600" />,
+                'Для себя — это больше про отдых, сезон или постоянное проживание?'
+              )
+            )}
+
+            {/* 1b. Вторичный сценарий (сдача в аренду во время отсутствия) */}
+            {state.secondaryUse?.value && (
+              renderCompactField(
+                'Дополнительный сценарий',
+                state.secondaryUse,
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />,
+                'Планируете ли сдавать объект в аренду во время своего отсутствия?'
+              )
+            )}
+
             {/* 2. Локация */}
             {renderCompactField(
               'Локация',
@@ -405,6 +426,16 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
               state.budget,
               <CircleDollarSign className="w-3.5 h-3.5 text-emerald-600" />,
               'На какой комфортный бюджет покупки вы ориентируетесь?'
+            )}
+
+            {/* 3a. Финансовый приоритет */}
+            {state.financialPriority?.value && (
+              renderCompactField(
+                'Финансовый приоритет',
+                state.financialPriority,
+                <CircleDollarSign className="w-3.5 h-3.5 text-emerald-700" />,
+                'Что важнее при покупке — минимальный первый взнос или низкий ежемесячный платеж?'
+              )
             )}
 
             {/* 4. Срок */}
@@ -653,28 +684,39 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
         {activeTab === 'facts' && (
           <div className="space-y-2 text-xs">
             {state.confirmedFacts && state.confirmedFacts.length > 0 ? (
-              state.confirmedFacts.map((fact, idx) => (
-                <div
-                  key={idx}
-                  className="p-2 rounded-lg bg-stone-50 border border-stone-100 flex flex-col space-y-0.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-stone-800">{fact.category}</span>
-                    {fact.turnId && (
-                      <button
-                        onClick={() => onTurnClick?.([fact.turnId])}
-                        className="text-[10px] text-teal-700 hover:underline font-mono"
-                      >
-                        #{fact.turnId.slice(-4)}
-                      </button>
+              state.confirmedFacts.map((fact, idx) => {
+                const categoryLabel =
+                  getCategoryLabel(fact.category) ||
+                  getMetricLabel(fact.category) ||
+                  fact.category;
+
+                return (
+                  <div
+                    key={idx}
+                    className="p-2 rounded-lg bg-stone-50 border border-stone-100 flex flex-col space-y-0.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-teal-900 text-[11px] uppercase tracking-wide">
+                        {categoryLabel}
+                      </span>
+                      {fact.turnId && (
+                        <button
+                          onClick={() => onTurnClick?.([fact.turnId])}
+                          className="text-[10px] text-teal-700 hover:underline font-mono"
+                        >
+                          #{fact.turnId.slice(-4)}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-stone-800 font-medium">{fact.value}</p>
+                    {fact.evidenceQuote && (
+                      <p className="text-[11px] text-stone-500 italic bg-white p-1 rounded border border-stone-100 mt-0.5">
+                        «{fact.evidenceQuote}»
+                      </p>
                     )}
                   </div>
-                  <p className="text-stone-700 font-medium">{fact.value}</p>
-                  {fact.evidenceQuote && (
-                    <p className="text-[11px] text-stone-500 italic">«{fact.evidenceQuote}»</p>
-                  )}
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="text-center py-6 text-stone-400 text-xs">
                 Подтверждённые факты появятся по мере диалога
@@ -686,24 +728,32 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
         {/* TAB 4: ВОЗРАЖЕНИЯ */}
         {activeTab === 'objections' && (
           <div className="space-y-2 text-xs">
-            {state.objections && state.objections.items && state.objections.items.length > 0 ? (
-              state.objections.items.map((obj, idx) => (
+            {(() => {
+              const realObjections = (state.objections?.items || []).filter(isRealObjection);
+              if (realObjections.length === 0) {
+                return (
+                  <div className="text-center py-6 text-stone-400 text-xs">
+                    Возражений пока не зафиксировано
+                  </div>
+                );
+              }
+              return realObjections.map((obj, idx) => (
                 <div
                   key={idx}
                   className="p-2.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200"
                 >
                   <div className="flex items-center space-x-1.5 font-semibold text-amber-950 mb-0.5">
                     <AlertCircle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                    <span>Возражение #{idx + 1}</span>
+                    <span>{getObjectionLabel(obj)}</span>
                   </div>
-                  <p className="text-[12px]">{obj}</p>
+                  {obj.includes(' — ') && (
+                    <p className="text-[11px] text-amber-800 mt-1 italic">
+                      {obj.split(' — ')[1]}
+                    </p>
+                  )}
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-6 text-stone-400 text-xs">
-                Возражений пока не зафиксировано
-              </div>
-            )}
+              ));
+            })()}
           </div>
         )}
       </div>

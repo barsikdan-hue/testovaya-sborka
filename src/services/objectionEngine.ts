@@ -1,4 +1,15 @@
 import { ActionType, ConversationState, SuggestedReply } from '../types';
+import { hasWholeWord, hasAnyWholeWord, hasPhrase, hasAnyPhrase } from './textUtils';
+
+export type ClientIntentType = 'objection' | 'clarification' | 'preference' | 'fact' | 'next_step' | 'stop';
+
+export interface ClientTurnIntent {
+  type: ClientIntentType;
+  category?: string;
+  ruleId?: string;
+  text?: string;
+  confidence: number;
+}
 
 export interface FastObjectionResult {
   id: string;
@@ -197,11 +208,13 @@ export function detectLocalObjection(
 
   // 1. RESPECT_STOP: Стоп-контакт (Высший приоритет)
   if (
-    lower.includes('больше не звоните') ||
-    lower.includes('удалите мой номер') ||
-    lower.includes('не звоните мне') ||
-    lower.includes('не пишите мне') ||
-    lower.includes('забудьте этот номер')
+    hasAnyPhrase(lower, [
+      'больше не звоните',
+      'удалите мой номер',
+      'не звоните мне',
+      'не пишите мне',
+      'забудьте этот номер',
+    ])
   ) {
     return {
       id: 'respect_stop',
@@ -215,11 +228,13 @@ export function detectLocalObjection(
 
   // 2. Уважение времени (за рулём, совещание)
   if (
-    lower.includes('за рулем') ||
-    lower.includes('за рулём') ||
-    lower.includes('на совещании') ||
-    lower.includes('не могу говорить') ||
-    lower.includes('перезвоните')
+    hasAnyPhrase(lower, [
+      'за рулем',
+      'за рулём',
+      'на совещании',
+      'не могу говорить',
+      'перезвоните',
+    ])
   ) {
     return {
       id: 'respect_busy',
@@ -233,12 +248,8 @@ export function detectLocalObjection(
 
   // 3. P37: Дорого (изоляция причины, а не защита цены!)
   if (
-    lower.includes('дорого') ||
-    lower.includes('дороговато') ||
-    lower.includes('цены космос') ||
-    lower.includes('высокая цена') ||
-    lower.includes('слишком дорого') ||
-    lower.includes('завышен')
+    hasAnyWholeWord(lower, ['дорого', 'дороговато', 'космос', 'завышена', 'завышены', 'завышен']) ||
+    hasAnyPhrase(lower, ['цены космос', 'высокая цена', 'слишком дорого', 'не потянем'])
   ) {
     // If client named specific numbers (e.g. 30 vs 50)
     const hasNumbers = /\d+/.test(lower);
@@ -259,10 +270,12 @@ export function detectLocalObjection(
 
   // 4. Надо подумать (уточнение предмета размышлений, а не согласие)
   if (
-    lower.includes('надо подумать') ||
-    lower.includes('я подумаю') ||
-    lower.includes('мне нужно подумать') ||
-    lower.includes('подумаем')
+    hasAnyPhrase(lower, [
+      'надо подумать',
+      'я подумаю',
+      'мне нужно подумать',
+      'подумаем',
+    ])
   ) {
     return {
       id: 'objection_think',
@@ -276,11 +289,13 @@ export function detectLocalObjection(
 
   // 5. Не сейчас / не к спеху / пауза
   if (
-    lower.includes('не сейчас') ||
-    lower.includes('не к спеху') ||
-    lower.includes('не горит') ||
-    lower.includes('в следующем году') ||
-    lower.includes('через полгода')
+    hasAnyPhrase(lower, [
+      'не сейчас',
+      'не к спеху',
+      'не горит',
+      'в следующем году',
+      'через полгода',
+    ])
   ) {
     return {
       id: 'objection_not_now',
@@ -294,12 +309,14 @@ export function detectLocalObjection(
 
   // 6. Сначала продам свою квартиру (условие, а не срок)
   if (
-    lower.includes('сначала продам') ||
-    lower.includes('продаем свою') ||
-    lower.includes('продаём свою') ||
-    lower.includes('продадим квартиру') ||
-    lower.includes('пока продаем') ||
-    lower.includes('пока продаём')
+    hasAnyPhrase(lower, [
+      'сначала продам',
+      'продаем свою',
+      'продаём свою',
+      'продадим квартиру',
+      'пока продаем',
+      'пока продаём',
+    ])
   ) {
     return {
       id: 'objection_sell_first',
@@ -313,10 +330,12 @@ export function detectLocalObjection(
 
   // 7. Далеко / локация
   if (
-    lower.includes('далеко') ||
-    lower.includes('неудобная локация') ||
-    lower.includes('далеко от моря') ||
-    lower.includes('далеко ехать')
+    hasAnyPhrase(lower, [
+      'неудобная локация',
+      'далеко от моря',
+      'далеко ехать',
+    ]) ||
+    hasAnyWholeWord(lower, ['далеко'])
   ) {
     return {
       id: 'objection_far',
@@ -330,10 +349,12 @@ export function detectLocalObjection(
 
   // 8. Не верю в доходность / сомневаюсь
   if (
-    lower.includes('доходност') ||
-    lower.includes('не верю в окупаемость') ||
-    lower.includes('не окупится') ||
-    lower.includes('где гарантии')
+    hasAnyPhrase(lower, [
+      'не верю в окупаемость',
+      'не окупится',
+      'где гарантии',
+    ]) ||
+    hasAnyWholeWord(lower, ['доходность', 'окупаемость'])
   ) {
     return {
       id: 'objection_yield',
@@ -347,10 +368,12 @@ export function detectLocalObjection(
 
   // 9. Хочу сравнить / смотрю другие варианты
   if (
-    lower.includes('хочу сравнить') ||
-    lower.includes('сравниваю') ||
-    lower.includes('смотрим другие варианты') ||
-    lower.includes('другие застройщики')
+    hasAnyPhrase(lower, [
+      'хочу сравнить',
+      'смотрим другие варианты',
+      'другие застройщики',
+    ]) ||
+    hasAnyWholeWord(lower, ['сравниваю'])
   ) {
     return {
       id: 'objection_compare',
@@ -364,11 +387,14 @@ export function detectLocalObjection(
 
   // 10. Нужно обсудить с супругом / семьей
   if (
-    lower.includes('с супруг') ||
-    lower.includes('с мужем') ||
-    lower.includes('с женой') ||
-    lower.includes('с семьей') ||
-    lower.includes('с семьёй')
+    hasAnyPhrase(lower, [
+      'с супругом',
+      'с супругой',
+      'с мужем',
+      'с женой',
+      'с семьей',
+      'с семьёй',
+    ])
   ) {
     return {
       id: 'objection_spouse',
@@ -382,11 +408,8 @@ export function detectLocalObjection(
 
   // 11. Ипотека / большой платёж
   if (
-    lower.includes('ипотек') ||
-    lower.includes('платеж') ||
-    lower.includes('платёж') ||
-    lower.includes('ставка') ||
-    lower.includes('первоначальный взнос')
+    hasAnyPhrase(lower, ['первоначальный взнос', 'большой платеж', 'большой платёж', 'высокая ставка']) ||
+    hasAnyWholeWord(lower, ['ипотека', 'ипотеку', 'платеж', 'платёж', 'ставка'])
   ) {
     return {
       id: 'objection_mortgage',
@@ -400,11 +423,8 @@ export function detectLocalObjection(
 
   // 12. Риски проекта / долгострой / надежность
   if (
-    lower.includes('риск') ||
-    lower.includes('долгострой') ||
-    lower.includes('не достроят') ||
-    lower.includes('статус земли') ||
-    lower.includes('снос')
+    hasAnyPhrase(lower, ['статус земли', 'не достроят', 'под снос']) ||
+    hasAnyWholeWord(lower, ['долгострой', 'долгостроев', 'риски', 'риск', 'снос'])
   ) {
     return {
       id: 'objection_risks',
@@ -418,13 +438,14 @@ export function detectLocalObjection(
 
   // 13. РАЗГРАНИЧЕНИЕ: «Для себя» vs «Переезд» (Требование 6)
   // «Для себя» НЕ означает автоматически переезд, постоянное проживание, школу или детей!
-  const hasExplicitLiving =
-    lower.includes('буду жить') ||
-    lower.includes('будем жить') ||
-    lower.includes('переезжаем') ||
-    lower.includes('хочу переехать') ||
-    lower.includes('планируем переезд') ||
-    lower.includes('для постоянного проживания');
+  const hasExplicitLiving = hasAnyPhrase(lower, [
+    'буду жить',
+    'будем жить',
+    'переезжаем',
+    'хочу переехать',
+    'планируем переезд',
+    'для постоянного проживания',
+  ]);
 
   if (hasExplicitLiving) {
     return {
@@ -439,7 +460,7 @@ export function detectLocalObjection(
   }
 
   // Если клиент сказал ТОЛЬКО «для себя» без явного подтверждения переезда
-  if (lower.includes('для себя')) {
+  if (hasPhrase(lower, 'для себя')) {
     return {
       id: 'clarify_for_myself_format',
       category: 'motive_neutral',
@@ -452,10 +473,12 @@ export function detectLocalObjection(
 
   // 14. Мотив «Пока просто смотрю»
   if (
-    lower.includes('просто смотрю') ||
-    lower.includes('пока присматриваюсь') ||
-    lower.includes('изучаю рынок') ||
-    lower.includes('прицениваюсь')
+    hasAnyPhrase(lower, [
+      'просто смотрю',
+      'пока присматриваюсь',
+      'изучаю рынок',
+      'прицениваюсь',
+    ])
   ) {
     return {
       id: 'clarify_browsing',
@@ -469,9 +492,11 @@ export function detectLocalObjection(
 
   // 15. Прямой запрос официальных документов и поэтажных планов (ANSWER)
   if (
-    lower.includes('проект договора') ||
-    lower.includes('поэтажный план') ||
-    lower.includes('договор')
+    hasAnyPhrase(lower, [
+      'проект договора',
+      'поэтажный план',
+    ]) ||
+    hasAnyWholeWord(lower, ['договор'])
   ) {
     return {
       id: 'answer_specific_doc',
@@ -486,20 +511,25 @@ export function detectLocalObjection(
 
   // 15b. Запрос фото / вариантов / подборки (PROPOSE_NEXT_STEP через видеопоказ)
   if (
-    lower.includes('планировк') ||
-    lower.includes('пришлите фото') ||
-    lower.includes('скиньте фото') ||
-    lower.includes('отправьте фото') ||
-    lower.includes('скиньте варианты') ||
-    lower.includes('пришлите варианты') ||
-    lower.includes('скиньте мне варианты') ||
-    lower.includes('пришлите подборку') ||
-    lower.includes('скиньте в вотсап') ||
-    lower.includes('скиньте в ватсап') ||
-    lower.includes('whatsapp') ||
-    lower.includes('ватсап') ||
-    lower.includes('вотсап') ||
-    lower.includes('телеграм')
+    hasAnyPhrase(lower, [
+      'пришлите фото',
+      'скиньте фото',
+      'отправьте фото',
+      'скиньте варианты',
+      'пришлите варианты',
+      'скиньте мне варианты',
+      'пришлите подборку',
+      'скиньте в вотсап',
+      'скиньте в ватсап',
+      'скиньте на вотсап',
+      'скиньте на ватсап',
+      'пришлите на вотсап',
+      'пришлите на ватсап',
+      'скиньте в телеграм',
+      'пришлите в телеграм',
+    ]) ||
+    ((hasAnyWholeWord(lower, ['скиньте', 'пришлите', 'отправьте']) || hasAnyPhrase(lower, ['скиньте в', 'пришлите в'])) &&
+     hasAnyWholeWord(lower, ['whatsapp', 'ватсап', 'вотсап', 'телеграм', 'telegram', 'варианты', 'планировки', 'фото']))
   ) {
     return {
       id: 'propose_video_variants',
@@ -514,13 +544,15 @@ export function detectLocalObjection(
 
   // 16. Отказ от видеосвязи / зума
   if (
-    lower.includes('не хочу видео') ||
-    lower.includes('не надо видео') ||
-    lower.includes('без видео') ||
-    lower.includes('не хочу зум') ||
-    lower.includes('не надо зум') ||
-    lower.includes('без зума') ||
-    lower.includes('не люблю видео')
+    hasAnyPhrase(lower, [
+      'не хочу видео',
+      'не надо видео',
+      'без видео',
+      'не хочу зум',
+      'не надо зум',
+      'без зума',
+      'не люблю видео',
+    ])
   ) {
     return {
       id: 'objection_refuse_video',
@@ -534,3 +566,171 @@ export function detectLocalObjection(
 
   return null;
 }
+
+/**
+ * Classifies client turn intent into one of 6 semantic categories:
+ * - 'stop': refusal to communicate or request to delete number
+ * - 'next_step': agreement or proposal of next step / call / meeting
+ * - 'objection': real objection or resistance
+ * - 'clarification': question or inquiry about property / conditions
+ * - 'preference': stated criteria, desires, requirements
+ * - 'fact': factual data about client, budget, property status
+ */
+export function classifyClientTurnIntent(
+  clientText: string,
+  state?: ConversationState
+): ClientTurnIntent {
+  const lower = clientText.toLowerCase().trim();
+
+  // 1. Stop / refusal to continue
+  if (
+    hasAnyPhrase(lower, [
+      'больше не звоните',
+      'удалите мой номер',
+      'не звоните мне',
+      'не звоните больше',
+      'не пишите мне',
+      'забудьте этот номер',
+      'передумали покупать',
+      'неактуально',
+      'больше не актуально',
+    ]) ||
+    hasAnyWholeWord(lower, ['отстаньте', 'заблокирую'])
+  ) {
+    return {
+      type: 'stop',
+      category: 'stop_contact',
+      text: clientText,
+      confidence: 1.0,
+    };
+  }
+
+  // 2. Next step agreement / scheduling
+  if (
+    hasAnyPhrase(lower, [
+      'давайте созвонимся',
+      'созвонимся завтра',
+      'по видео',
+      'по зуму',
+      'удобно в',
+      'в 18:00',
+      'в 18 00',
+      'в 19:00',
+      'в 19 00',
+      'в 12:00',
+      'в 12 00',
+      'завтра в',
+      'жду ссылку',
+      'пришлите ссылку',
+      'договорились по времени',
+    ]) ||
+    (hasAnyPhrase(lower, ['давайте завтра', 'удобно завтра', 'согласен на видео', 'созвонимся']) && !lower.includes('не хочу'))
+  ) {
+    return {
+      type: 'next_step',
+      category: 'next_step_agreed',
+      text: clientText,
+      confidence: 0.95,
+    };
+  }
+
+  // 3. Local objection check
+  const localObj = detectLocalObjection(clientText, state);
+  if (localObj) {
+    if (localObj.category === 'stop_contact') {
+      return {
+        type: 'stop',
+        category: localObj.category,
+        ruleId: localObj.ruleId,
+        text: localObj.text,
+        confidence: 0.95,
+      };
+    }
+    return {
+      type: 'objection',
+      category: localObj.category,
+      ruleId: localObj.ruleId,
+      text: localObj.text,
+      confidence: 0.9,
+    };
+  }
+
+  // 4. Clarification / questions from client
+  if (
+    clientText.includes('?') ||
+    hasAnyPhrase(lower, [
+      'где именно',
+      'а где',
+      'а когда',
+      'сколько стоит',
+      'какая цена',
+      'какая площадь',
+      'какие условия',
+      'а почему',
+      'что за комплекс',
+      'какой застройщик',
+      'а есть ли',
+      'подскажите по',
+      'уточните',
+    ]) ||
+    (lower.startsWith('а ') && lower.includes('?'))
+  ) {
+    return {
+      type: 'clarification',
+      category: 'question_inquiry',
+      text: clientText,
+      confidence: 0.85,
+    };
+  }
+
+  // 5. Client preference / property requirements
+  if (
+    hasAnyPhrase(lower, [
+      'нужен высокий этаж',
+      'высокий этаж',
+      'обязательно балкон',
+      'нужен балкон',
+      'вид на море',
+      'с ремонтом',
+      'в чистовой',
+      'паркинг обязателен',
+      'хотим с бассейном',
+      'две спальни',
+      'двухкомнатную',
+      'трехкомнатную',
+      'не первый этаж',
+      'не последний этаж',
+      'рядом с парком',
+      'тихий район',
+    ]) ||
+    (hasAnyWholeWord(lower, ['хотим', 'ищем', 'нужен', 'нужна', 'нужно', 'выбираем', 'рассматриваем', 'важно']) &&
+     hasAnyWholeWord(lower, ['этаж', 'балкон', 'ремонт', 'терраса', 'вид', 'море', 'паркинг', 'бассейн', 'метраж', 'комнат']))
+  ) {
+    return {
+      type: 'preference',
+      category: 'client_preference',
+      text: clientText,
+      confidence: 0.9,
+    };
+  }
+
+  // 6. Facts (budget, payment method, situation)
+  if (
+    hasAnyPhrase(lower, ['для себя', 'для отдыха', 'под сдачу', 'с семьей', 'живем в', 'продаем квартиру', 'наличные', 'в ипотеку']) ||
+    hasAnyWholeWord(lower, ['миллион', 'миллионов', 'млн', 'бюджет', 'ипотека', 'наличка'])
+  ) {
+    return {
+      type: 'fact',
+      category: 'client_fact',
+      text: clientText,
+      confidence: 0.85,
+    };
+  }
+
+  return {
+    type: 'fact',
+    text: clientText,
+    confidence: 0.5,
+  };
+}
+

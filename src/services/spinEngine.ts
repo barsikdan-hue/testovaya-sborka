@@ -11,6 +11,83 @@ import {
 } from '../types';
 import { isSubstantiveClientTurn } from './objectionEngine';
 
+export type RealEstatePainCategory =
+  | 'noise_sleep'
+  | 'traffic_logistics'
+  | 'security_risks'
+  | 'yield_rental'
+  | 'space_crowded'
+  | 'general';
+
+export function detectRealEstatePainCategory(text: string): RealEstatePainCategory {
+  if (!text) return 'general';
+  const lower = text.toLowerCase();
+  if (
+    lower.includes('шум') ||
+    lower.includes('звукоизоляц') ||
+    lower.includes('музык') ||
+    lower.includes('дорога под окнами') ||
+    lower.includes('соседи') ||
+    lower.includes('сон') ||
+    lower.includes('тишин')
+  ) {
+    return 'noise_sleep';
+  }
+  if (
+    lower.includes('пробк') ||
+    lower.includes('далеко ехать') ||
+    lower.includes('добираться') ||
+    lower.includes('дорога') ||
+    lower.includes('транспорт') ||
+    lower.includes('развязк') ||
+    lower.includes('парковк')
+  ) {
+    return 'traffic_logistics';
+  }
+  if (
+    lower.includes('риск') ||
+    lower.includes('долгостро') ||
+    lower.includes('надежност') ||
+    lower.includes('статус земли') ||
+    lower.includes('снос') ||
+    lower.includes('прозрачност') ||
+    lower.includes('обман') ||
+    lower.includes('пережива') ||
+    lower.includes('боим') ||
+    lower.includes('боязн') ||
+    lower.includes('опаса') ||
+    lower.includes('перенесет сдачу') ||
+    lower.includes('перенесут сдачу') ||
+    lower.includes('срок сдачи') ||
+    lower.includes('сроки сдачи')
+  ) {
+    return 'security_risks';
+  }
+  if (
+    lower.includes('доход') ||
+    lower.includes('окупаемост') ||
+    lower.includes('простой') ||
+    lower.includes('аренд') ||
+    lower.includes('под сдачу') ||
+    lower.includes('сдавать') ||
+    lower.includes('сдавать в аренду') ||
+    lower.includes('сдачи в аренду') ||
+    lower.includes('управляющая компания')
+  ) {
+    return 'yield_rental';
+  }
+  if (
+    lower.includes('тесно') ||
+    lower.includes('мало места') ||
+    lower.includes('нет личного пространства') ||
+    lower.includes('детям расти') ||
+    lower.includes('неудобная планировка')
+  ) {
+    return 'space_crowded';
+  }
+  return 'general';
+}
+
 export function createInitialSpinState(): SpinState {
   return {
     situation: [],
@@ -204,17 +281,31 @@ export function extractClientSpinMeaning(
     lower.includes('хочу просто высыпаться') ||
     lower.includes('для нас главное — покой') ||
     lower.includes('чтобы дети спокойно спали') ||
-    lower.includes('главное чтобы решили вопрос со сном')
+    lower.includes('главное чтобы решили вопрос со сном') ||
+    lower.includes('быстрее добираться') ||
+    lower.includes('без пробок') ||
+    lower.includes('гарантия надежности') ||
+    lower.includes('стабильный доход') ||
+    lower.includes('чтобы у каждого было место') ||
+    lower.includes('чтобы всем хватало места')
   ) {
+    const painCat = detectRealEstatePainCategory(text);
+    let meaning = 'Потребность в решении ключевой задачи проживания';
+    if (painCat === 'noise_sleep') meaning = 'Потребность в тишине и полноценном спокойном сне/отдыхе';
+    else if (painCat === 'traffic_logistics') meaning = 'Потребность в быстрой логистике и экономии времени в пути';
+    else if (painCat === 'security_risks') meaning = 'Потребность в надёжности застройщика и юридической чистоте сделки';
+    else if (painCat === 'yield_rental') meaning = 'Потребность в гарантированной окупаемости и прозрачном пассивном доходе';
+    else if (painCat === 'space_crowded') meaning = 'Потребность в просторе и приватном пространстве для всей семьи';
+
     return {
       stage: 'NEED_PAYOFF',
-      meaningText: 'Потребность в тишине и полноценном спокойном сне/отдыхе',
+      meaningText: meaning,
       evidenceQuote: text,
       isProblemPain: false,
     };
   }
 
-  // 2. Implication (последствия: сон, здоровье, стресс, жизнь)
+  // 2. Implication (последствия: сон, здоровье, стресс, время, деньги, жизнь)
   if (
     lower.includes('плохо сплю') ||
     lower.includes('не могу спать') ||
@@ -229,11 +320,17 @@ export function extractClientSpinMeaning(
     lower.includes('дети капризничают') ||
     lower.includes('постоянно подстраиваться') ||
     lower.includes('тратим кучу времени') ||
-    lower.includes('теряем деньги')
+    lower.includes('теряем деньги') ||
+    lower.includes('устали стоять в пробках') ||
+    lower.includes('время жалко') ||
+    lower.includes('боюсь потерять деньги') ||
+    lower.includes('боюсь что заморозят') ||
+    lower.includes('простаивает без арендаторов') ||
+    lower.includes('друг у друга на головах')
   ) {
     return {
       stage: 'IMPLICATION',
-      meaningText: 'Влияние на качество сна, отдыха и повседневное самочувствие',
+      meaningText: 'Влияние дискомфорта на повседневное самочувствие, время или финансы',
       evidenceQuote: text,
       isProblemPain: true,
     };
@@ -252,11 +349,24 @@ export function extractClientSpinMeaning(
     lower.includes('постоянные пробки') ||
     lower.includes('неудобно добираться') ||
     lower.includes('плохая звукоизоляция') ||
-    lower.includes('соседи шумят')
+    lower.includes('соседи шумят') ||
+    lower.includes('долгострой') ||
+    lower.includes('боюсь нарваться') ||
+    lower.includes('не верю застройщикам') ||
+    lower.includes('мало места') ||
+    lower.includes('не сезон')
   ) {
+    const painCat = detectRealEstatePainCategory(text);
+    let meaning = 'Ограничение или неудобство в текущей ситуации';
+    if (painCat === 'noise_sleep') meaning = 'Дискомфорт от шума и плохой звукоизоляции';
+    else if (painCat === 'traffic_logistics') meaning = 'Потери времени из-за пробок и плохой логистики';
+    else if (painCat === 'security_risks') meaning = 'Опасения за надежность застройщика и риски недостроя';
+    else if (painCat === 'yield_rental') meaning = 'Неуверенность в доходности и заполняемости объекта';
+    else if (painCat === 'space_crowded') meaning = 'Теснота и нехватка жилой площади для семьи';
+
     return {
       stage: 'PROBLEM',
-      meaningText: 'Дискомфорт и шум в текущем месте проживания',
+      meaningText: meaning,
       evidenceQuote: text,
       isProblemPain: true,
     };
@@ -294,16 +404,60 @@ export function buildHpbPresentation(
   hpb: HpbLink;
   fullSpeech: string;
 } {
-  const hpb: HpbLink = {
-    clientNeed: clientNeed || 'Тишина и возможность нормально отдыхать ночью',
-    evidenceQuote,
-    characteristic: 'В проекте предусмотрены номера, ориентированные во внутренний двор',
-    advantage: 'Они меньше контактируют с основной дорогой и активной общественной зоной',
-    benefit:
-      'Для вас это означает более спокойный сон и возможность нормально отдыхать, а не снова сталкиваться с шумом, от которого вы хотите уйти',
-  };
+  const painCat = detectRealEstatePainCategory(evidenceQuote || clientNeed);
 
-  const fullSpeech = `Вы сказали: «${evidenceQuote}». В данном комплексе предусмотрены номера, ориентированные во внутренний закрытый двор — они изолированы от шума дороги. Для вас это означает спокойный сон и полноценный отдых без ночного шума. Насколько это соответствует тому, что вы описывали?`;
+  let hpb: HpbLink;
+  if (painCat === 'traffic_logistics') {
+    hpb = {
+      clientNeed: clientNeed || 'Удобная логистика и экономия времени на дорогу',
+      evidenceQuote,
+      characteristic: 'Комплекс расположен в точке с прямым выездом на ключевые магистрали и развитой пешей доступностью',
+      advantage: 'Вам не придётся ежедневно терять часы в пиковых пробках',
+      benefit: 'Это сохраняет до 2-3 часов каждый день для личной жизни и семьи',
+    };
+  } else if (painCat === 'security_risks') {
+    hpb = {
+      clientNeed: clientNeed || 'Надёжность сделки, прозрачность документов и защита капитала',
+      evidenceQuote,
+      characteristic: 'Строительство ведётся строго по ФЗ-214 с эскроу-счетами в ведущем государственном банке',
+      advantage: 'Ваши средства заблокированы до официальной сдачи объекта, а риски долгостроя исключены',
+      benefit: 'Полное спокойствие за вложенные средства и юридическая чистота на каждом этапе',
+    };
+  } else if (painCat === 'yield_rental') {
+    hpb = {
+      clientNeed: clientNeed || 'Стабильная доходность и круглогодичная арендная загрузка',
+      evidenceQuote,
+      characteristic: 'Объектом управляет профессиональный отельный оператор с подтвержденной моделью заполняемости',
+      advantage: 'Маркетинг, клининг и управление полностью закрываются оператором по договору',
+      benefit: 'Вы получаете прогнозируемый пассивный доход без необходимости лично заниматься бытовыми вопросами',
+    };
+  } else if (painCat === 'space_crowded') {
+    hpb = {
+      clientNeed: clientNeed || 'Простор, приватность и комфорт для каждого члена семьи',
+      evidenceQuote,
+      characteristic: 'Продуманные мастер-спальни с отдельными гардеробными и просторные кухни-гостиные',
+      advantage: 'Каждый член семьи получает комфортное личное пространство',
+      benefit: 'Уютная атмосфера дома и отсутствие бытового дискомфорта',
+    };
+  } else if (painCat === 'noise_sleep') {
+    hpb = {
+      clientNeed: clientNeed || 'Тишина и возможность нормально отдыхать ночью',
+      evidenceQuote,
+      characteristic: 'В проекте предусмотрены варианты с ориентацией во внутренний закрытый двор и усиленной звукоизоляцией',
+      advantage: 'Они меньше контактируют с основной дорогой и активной общественной зоной',
+      benefit: 'Для вас это означает более спокойный сон и возможность нормально отдыхать без постороннего шума',
+    };
+  } else {
+    hpb = {
+      clientNeed: clientNeed || 'Точное соответствие объекта вашим жизненным задачам',
+      evidenceQuote,
+      characteristic: 'Планировочные и локационные решения, подобранные индивидуально под ваши критерии',
+      advantage: 'Закрывает ключевые требования без лишних компромиссов',
+      benefit: 'Вы получаете именно тот комфорт и функционал, на который рассчитывали',
+    };
+  }
+
+  const fullSpeech = `Вы сказали: «${evidenceQuote}». В данном предложении предусмотрено: ${hpb.characteristic.toLowerCase()} — ${hpb.advantage.toLowerCase()}. ${hpb.benefit}. Насколько это соответствует тому, что вы описывали?`;
 
   return { hpb, fullSpeech };
 }
@@ -487,9 +641,23 @@ export function evaluateSpinAndHpb(
       extracted?.evidenceQuote ||
       text;
 
+    const painCat = detectRealEstatePainCategory(impQuote);
+    let question = 'Если бы удалось полностью решить этот вопрос, что для вас изменилось бы в первую очередь?';
+    if (painCat === 'noise_sleep') {
+      question = 'Если бы удалось подобрать вариант с тихим закрытым двором и надежной звукоизоляцией, насколько это решило бы вопрос?';
+    } else if (painCat === 'traffic_logistics') {
+      question = 'Если бы вся нужная инфраструктура и море были в 10-15 минутах без пробок, насколько это упростило бы график?';
+    } else if (painCat === 'security_risks') {
+      question = 'Если мы предоставим полный аудит документов, эскроу-счета и проверим застройщика по 214-ФЗ, это снимет вопрос безопасности?';
+    } else if (painCat === 'yield_rental') {
+      question = 'Если финансовая модель подтвердится исторической загрузкой и договором отельного оператора, это сделает проект интересным?';
+    } else if (painCat === 'space_crowded') {
+      question = 'Если у каждого появится своя изолированная зона плюс просторная гостиная, как это повлияет на атмосферу дома?';
+    }
+
     return {
       suggestionMode: 'SPIN_NEED_PAYOFF',
-      suggestedText: 'Если бы удалось полностью решить этот вопрос, что для вас изменилось бы в первую очередь?',
+      suggestedText: question,
       shortReason: 'Клиент признал последствия проблемы. Формируем направляющую ценность (Need-payoff).',
       evidenceQuote: impQuote,
       expectedClientMeaning: 'Клиент сам формулирует желаемый образ результата и ценность решения.',
@@ -504,12 +672,33 @@ export function evaluateSpinAndHpb(
       extracted?.evidenceQuote ||
       text;
 
+    const painCat = detectRealEstatePainCategory(probQuote);
+    let question = 'К чему это приводит и как влияет на ваше решение?';
+    let reason = 'Обнаружена сложность в текущей ситуации. Углубляем последствия по SPIN перед презентацией.';
+
+    if (painCat === 'noise_sleep') {
+      question = 'Что именно больше всего страдает из-за этого — отдых, сон или общее состояние?';
+      reason = 'Обнаружена боль («шум/сон»). Углубляем последствия по SPIN перед презентацией.';
+    } else if (painCat === 'traffic_logistics') {
+      question = 'Сколько времени сейчас уходит на дорогу и что из-за этого приходится откладывать?';
+      reason = 'Обнаружена проблема логистики и пробок. Исследуем потери времени клиента.';
+    } else if (painCat === 'security_risks') {
+      question = 'Что больше всего настораживает — темпы стройки, перенос сроков или юридическая чистота документов?';
+      reason = 'Обнаружено опасение по безопасности. Локализуем конкретный юридический или финансовый риск.';
+    } else if (painCat === 'yield_rental') {
+      question = 'Что вызывает основные сомнения — реальная загрузка в низкий сезон или надежность управляющей компании?';
+      reason = 'Обнаружено сомнение в доходности. Выясняем ключевой барьер инвестора.';
+    } else if (painCat === 'space_crowded') {
+      question = 'Как теснота сказывается на повседневной жизни семьи и возможности уединиться?';
+      reason = 'Обнаружена нехватка площади. Исследуем влияние на комфорт семьи.';
+    }
+
     return {
       suggestionMode: 'SPIN_IMPLICATION',
-      suggestedText: 'Что именно больше всего страдает из-за этого — отдых, сон или общее состояние?',
-      shortReason: 'Обнаружена боль («слишком шумно»). Углубляем последствия по SPIN перед презентацией.',
+      suggestedText: question,
+      shortReason: reason,
       evidenceQuote: probQuote,
-      expectedClientMeaning: 'Клиент раскрывает масштаб последствий для сна и повседневной жизни.',
+      expectedClientMeaning: 'Клиент раскрывает масштаб последствий для повседневной жизни или планов.',
       updatedSpin: nextSpin,
     };
   }

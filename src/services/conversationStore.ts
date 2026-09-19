@@ -1,10 +1,14 @@
 import { CallStage, ConfirmedFact, ConversationState, CriterionItem, SpinState, TranscriptTurn, UnconfirmedHypothesis } from '../types';
+import { validateEvidenceQuote, hasAnyPhrase } from './textUtils';
 
 export function createInitialState(): ConversationState {
   return {
     stage: 'contact',
     revision: 0,
     goal: { value: null, evidenceTurnIds: [] },
+    primaryGoal: { value: null, evidenceTurnIds: [] },
+    secondaryUse: { value: null, evidenceTurnIds: [] },
+    financialPriority: { value: null, evidenceTurnIds: [] },
     location: { value: null, evidenceTurnIds: [] },
     budget: { value: null, evidenceTurnIds: [] },
     paymentMethod: { value: null, evidenceTurnIds: [] },
@@ -182,6 +186,51 @@ export function mergeFactsDelta(
     const sanitizedVal = sanitizeFactValue(field, value, turnText);
     if (!sanitizedVal) continue;
 
+    // Requirement 6: EVIDENCE INVARIANT
+    // A confirmed fact MUST have a valid quote found in the client turn text
+    if (turnText && evidenceQuote) {
+      if (!validateEvidenceQuote(turnText, evidenceQuote)) {
+        console.warn(
+          `[Evidence Invariant] Rejected fact "${field}" with fabricated quote "${evidenceQuote}" against turn: "${turnText}"`
+        );
+        next.unconfirmedHypotheses.push({
+          category: item.category || field,
+          text: sanitizedVal,
+          reason: `Evidence quote "${evidenceQuote}" not found in turn text`,
+        });
+        continue;
+      }
+    }
+
+    // Specific hallucination guard for decision makers (e.g. "важен" / "предложений" matching "жен")
+    if ((field === 'decisionMakers' || field === 'decision_makers') && turnText) {
+      const mentionsSpouse = hasAnyPhrase(turnText, [
+        'с женой',
+        'с мужем',
+        'с супругой',
+        'с супругом',
+        'с семьей',
+        'с семьёй',
+        'решаем вместе',
+        'обсудим с женой',
+        'обсудим с мужем',
+        'советуюсь с семьей',
+      ]);
+      const mentionsSolo = hasAnyPhrase(turnText, [
+        'сам решаю',
+        'сама решаю',
+        'один выбираю',
+        'одна выбираю',
+        'самостоятельно',
+      ]);
+      if (!mentionsSpouse && !mentionsSolo) {
+        console.warn(
+          `[DecisionMaker Invariant] Rejected decision maker "${sanitizedVal}" without explicit client evidence in turn: "${turnText}"`
+        );
+        continue;
+      }
+    }
+
     // Record to confirmedFacts collection if we have turnId and a quote
     const quote = (evidenceQuote && evidenceQuote.trim()) || (turnText ? turnText.trim() : '');
     if (quote && evidenceTurnId) {
@@ -208,12 +257,79 @@ export function mergeFactsDelta(
     }
 
     switch (field) {
-      case 'goal':
+      case 'primaryGoal':
+        next.primaryGoal = {
+          value: sanitizedVal,
+          evidenceTurnIds: Array.from(new Set([...(next.primaryGoal?.evidenceTurnIds || []), evidenceTurnId])),
+          needsClarification,
+        };
         next.goal = {
           value: sanitizedVal,
           evidenceTurnIds: Array.from(new Set([...(next.goal?.evidenceTurnIds || []), evidenceTurnId])),
           needsClarification,
         };
+        break;
+
+      case 'secondaryUse':
+        next.secondaryUse = {
+          value: sanitizedVal,
+          evidenceTurnIds: Array.from(new Set([...(next.secondaryUse?.evidenceTurnIds || []), evidenceTurnId])),
+          needsClarification,
+        };
+        break;
+
+      case 'financialPriority':
+      case 'financial_priority':
+        next.financialPriority = {
+          value: sanitizedVal,
+          evidenceTurnIds: Array.from(new Set([...(next.financialPriority?.evidenceTurnIds || []), evidenceTurnId])),
+          needsClarification,
+        };
+        break;
+
+      case 'goal':
+        // Requirement 7: Goal model refinement (primaryGoal vs secondaryUse)
+        if (
+          sanitizedVal.toLowerCase().includes('жизн') ||
+          sanitizedVal.toLowerCase().includes('проживан') ||
+          sanitizedVal.toLowerCase().includes('пмж') ||
+          sanitizedVal.toLowerCase().includes('переезд')
+        ) {
+          next.primaryGoal = {
+            value: sanitizedVal,
+            evidenceTurnIds: Array.from(new Set([...(next.primaryGoal?.evidenceTurnIds || []), evidenceTurnId])),
+            needsClarification,
+          };
+          next.goal = {
+            value: sanitizedVal,
+            evidenceTurnIds: Array.from(new Set([...(next.goal?.evidenceTurnIds || []), evidenceTurnId])),
+            needsClarification,
+          };
+        } else if (
+          sanitizedVal.toLowerCase().includes('сдавать') ||
+          sanitizedVal.toLowerCase().includes('аренд')
+        ) {
+          // If client already stated living is primary, treat rental as secondary
+          if (next.primaryGoal?.value && next.primaryGoal.value.toLowerCase().includes('жизн')) {
+            next.secondaryUse = {
+              value: 'Периодическая сдача во время отсутствия',
+              evidenceTurnIds: Array.from(new Set([...(next.secondaryUse?.evidenceTurnIds || []), evidenceTurnId])),
+              needsClarification,
+            };
+          } else {
+            next.goal = {
+              value: sanitizedVal,
+              evidenceTurnIds: Array.from(new Set([...(next.goal?.evidenceTurnIds || []), evidenceTurnId])),
+              needsClarification,
+            };
+          }
+        } else {
+          next.goal = {
+            value: sanitizedVal,
+            evidenceTurnIds: Array.from(new Set([...(next.goal?.evidenceTurnIds || []), evidenceTurnId])),
+            needsClarification,
+          };
+        }
         break;
 
       case 'location':

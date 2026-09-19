@@ -253,12 +253,23 @@ export interface UnconfirmedHypothesis {
   reason: string;
 }
 
+export type ObjectionKind =
+  | 'objection'
+  | 'clarification'
+  | 'preference'
+  | 'fact'
+  | 'next_step'
+  | 'stop';
+
 export interface ConversationState {
   stage: CallStage;
   dealStage?: DealStage;
   conversationTask?: ConversationTask;
   revision: number;
   goal: FactEntry;
+  primaryGoal?: FactEntry;
+  secondaryUse?: FactEntry;
+  financialPriority?: FactEntry;
   location: FactEntry;
   budget: FactEntry;
   paymentMethod: FactEntry;
@@ -357,6 +368,9 @@ export interface SuggestedReply {
   closesMetric?: string | null;
   closesMetricLabel?: string | null;
   immediatePriority?: string | null;
+  semanticKey?: string | null;
+  used?: boolean;
+  usedAt?: number;
 }
 
 export interface AnalysisResponse {

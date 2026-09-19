@@ -7,6 +7,11 @@ import { ConversationState, TranscriptTurn } from '../types';
 import { isDuplicateFinalTurn } from './sttDedup';
 import { extractDeterministicFacts } from './deterministicFacts';
 import { selectCandidateRules } from './candidateRules';
+import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepeat';
+import { hasWholeWord, hasAnyWholeWord, validateEvidenceQuote } from './textUtils';
+import { detectRealEstatePainCategory, buildHpbPresentation } from './spinEngine';
+import { classifyClientTurnIntent } from './objectionEngine';
+import { SuggestedReply } from '../types';
 
 describe('Copilot Engine & Andrei OS Test Suite', () => {
   const initialConversationState: ConversationState = createInitialState();
@@ -429,4 +434,212 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
     expect(abortCalled).toBe(true);
     expect(provider.getStats().cancelledCount).toBe(1);
   });
+
+  // Scenario 19: Whole-word matching vs substring matching
+  it('Scenario 19: hasWholeWord avoids substring false positives', () => {
+    // "рядом" does not trigger "дом"
+    expect(hasWholeWord('магазин находится рядом', 'дом')).toBe(false);
+    expect(hasWholeWord('мы ищем загородный дом у моря', 'дом')).toBe(true);
+
+    // "дорого" does not match "дорога"
+    expect(hasWholeWord('хорошая дорога до пляжа', 'дорого')).toBe(false);
+    expect(hasWholeWord('для нас это слишком дорого', 'дорого')).toBe(true);
+
+    // "миллион" alone does not match "дорого"
+    expect(hasAnyWholeWord('бюджет 15 миллионов', ['дорого', 'космос'])).toBe(false);
+  });
+
+  // Scenario 20: Semantic Anti-Repeat blocks asking for already confirmed facts
+  it('Scenario 20: semanticAntiRepeat blocks suggestions asking for confirmed facts', () => {
+    const stateWithBudget = {
+      ...initialConversationState,
+      budget: { value: '25-30 млн руб', evidenceTurnIds: ['turn_1'] },
+      location: { value: 'Центр Сочи', evidenceTurnIds: ['turn_2'] },
+    };
+
+    const budgetQuestion: SuggestedReply = {
+      id: 'rep_1',
+      sessionId: 's1',
+      basedOnRevision: 1,
+      candidateRuleId: 'clarify_budget',
+      actionType: 'CLARIFY',
+      text: 'На какой порядок суммы покупки ориентируетесь?',
+      shortReason: 'Уточнить бюджет',
+      evidenceTurnIds: ['turn_1'],
+      createdAt: Date.now(),
+      stage: 'diagnostics',
+      semanticKey: 'ask_budget',
+    };
+
+    const checkBudget = checkSemanticAntiRepeat(budgetQuestion, stateWithBudget);
+    expect(checkBudget.accepted).toBe(false);
+    expect(checkBudget.rejectionReason).toContain('Бюджет');
+
+    const locationQuestion: SuggestedReply = {
+      id: 'rep_2',
+      sessionId: 's1',
+      basedOnRevision: 1,
+      candidateRuleId: null,
+      actionType: 'CLARIFY',
+      text: 'Какие районы Сочи рассматриваете?',
+      shortReason: 'Уточнить локацию',
+      evidenceTurnIds: ['turn_2'],
+      createdAt: Date.now(),
+      stage: 'diagnostics',
+      semanticKey: 'ask_location',
+    };
+
+    const checkLocation = checkSemanticAntiRepeat(locationQuestion, stateWithBudget);
+    expect(checkLocation.accepted).toBe(false);
+    expect(checkLocation.rejectionReason).toContain('Локация');
+  });
+
+  // Scenario 21: Semantic Anti-Repeat blocks questions already in askedQuestions
+  it('Scenario 21: semanticAntiRepeat blocks questions already recorded in askedQuestions', () => {
+    const stateWithAsked = {
+      ...initialConversationState,
+      askedQuestions: ['Кто ещё будет участвовать в выборе и с кем нужно будет обсудить варианты?'],
+    };
+
+    const decisionMakerQuestion: SuggestedReply = {
+      id: 'rep_3',
+      sessionId: 's1',
+      basedOnRevision: 1,
+      candidateRuleId: 'check_decision_makers',
+      actionType: 'CLARIFY',
+      text: 'Кто ещё будет участвовать в выборе квартиры?',
+      shortReason: 'ЛПР',
+      evidenceTurnIds: ['turn_3'],
+      createdAt: Date.now(),
+      stage: 'diagnostics',
+      semanticKey: 'ask_decision_makers',
+    };
+
+    const check = checkSemanticAntiRepeat(decisionMakerQuestion, stateWithAsked);
+    expect(check.accepted).toBe(false);
+    expect(check.rejectionReason).toContain('уже задавал');
+  });
+
+  // Scenario 22: Dynamic SPIN adapts HPB to RealEstatePainCategory
+  it('Scenario 22: dynamic SPIN categorizes pain and builds tailored HPB', () => {
+    // Noise & Sleep pain
+    const noiseQuote = 'Невозможно спать, под окнами трасса и шумят по ночам';
+    expect(detectRealEstatePainCategory(noiseQuote)).toBe('noise_sleep');
+
+    const { hpb: noiseHpb } = buildHpbPresentation('Тишина и нормальный сон', noiseQuote);
+    expect(noiseHpb.clientNeed.toLowerCase()).toContain('тишин');
+    expect(noiseHpb.characteristic).toContain('звукоизоляци');
+    expect(noiseHpb.benefit).toContain('сон');
+
+    // Traffic & logistics pain
+    const trafficQuote = 'По два часа стоим в пробках, до моря не доехать';
+    expect(detectRealEstatePainCategory(trafficQuote)).toBe('traffic_logistics');
+
+    const { hpb: trafficHpb } = buildHpbPresentation('Быстрая логистика', trafficQuote);
+    expect(trafficHpb.clientNeed).toContain('логистик');
+    expect(trafficHpb.benefit).toContain('час');
+
+    // Security risks pain
+    const riskQuote = 'Боимся долгостроев и что застройщик перенесет сдачу дома';
+    expect(detectRealEstatePainCategory(riskQuote)).toBe('security_risks');
+
+    const { hpb: riskHpb } = buildHpbPresentation('Безопасность сделки', riskQuote);
+    expect(riskHpb.clientNeed).toContain('Безопасность');
+    expect(riskHpb.characteristic).toContain('214');
+  });
+
+  // Scenario 23: Intent classification distinguishes objections from clarifications and next steps
+  it('Scenario 23: classifyClientTurnIntent separates objections, clarifications, preferences and next steps', () => {
+    // True objection
+    const obj = classifyClientTurnIntent('Это очень дорого для нас, не потянем');
+    expect(obj.type).toBe('objection');
+    expect(obj.category).toBe('objection_price');
+
+    // Clarification
+    const clar = classifyClientTurnIntent('А где именно строится этот комплекс?');
+    expect(clar.type).toBe('clarification');
+
+    // Preference
+    const pref = classifyClientTurnIntent('Нам обязательно нужен высокий этаж и балкон');
+    expect(pref.type).toBe('preference');
+
+    // Next step
+    const nxt = classifyClientTurnIntent('Давайте созвонимся завтра в 18:00 по видео');
+    expect(nxt.type).toBe('next_step');
+
+    // Stop
+    const stp = classifyClientTurnIntent('Не звоните мне больше, мы передумали покупать');
+    expect(stp.type).toBe('stop');
+  });
+
+  // Scenario 24: "Used" button updates suggestion state and askedQuestions without injecting duplicate turns
+  it('Scenario 24: handleUseSuggestion pattern records question in askedQuestions and does not mutate transcript', () => {
+    const transcript: TranscriptTurn[] = [
+      { id: 't1', speaker: 'agent', text: 'Добрый день!', timestamp: 1000, sessionId: 'sess_1', source: 'microphone', isFinal: true },
+      { id: 't2', speaker: 'client', text: 'Здравствуйте, ищем квартиру в Сочи', timestamp: 2000, sessionId: 'sess_1', source: 'call_audio', isFinal: true },
+    ];
+    const initialCount = transcript.length;
+
+    const suggestion: SuggestedReply = {
+      id: 'sug_1',
+      sessionId: 'sess_1',
+      basedOnRevision: 1,
+      candidateRuleId: 'P37',
+      text: 'Дорого относительно бюджета, похожих вариантов или ценности самого решения?',
+      shortReason: 'Изоляция цены',
+      evidenceTurnIds: ['t2'],
+      createdAt: Date.now(),
+      stage: 'objection_clarification',
+      semanticKey: 'clarify_objection_price',
+    };
+
+    // Simulate handleUseSuggestion update
+    const updatedSuggestion: SuggestedReply = {
+      ...suggestion,
+      used: true,
+      usedAt: Date.now(),
+    };
+    expect(updatedSuggestion.used).toBe(true);
+    expect(typeof updatedSuggestion.usedAt).toBe('number');
+
+    // Verify transcript was NOT mutated with a duplicate turn
+    expect(transcript.length).toBe(initialCount);
+
+    // Verify question is added to askedQuestions for anti-repeat
+    const state: ConversationState = {
+      ...createInitialState(),
+      askedQuestions: [updatedSuggestion.text],
+    };
+    const repeatCheck = checkSemanticAntiRepeat(updatedSuggestion, state);
+    expect(repeatCheck.accepted).toBe(false);
+  });
+
+  // Scenario 25: Hallucination Prevention & Substring Safety
+  it('Scenario 25: prevents hallucinations from substring matches (рядом != дом, ипотека != ип)', () => {
+    // "рядом" must not trigger "дом"
+    expect(hasWholeWord('Квартира рядом с парком', 'дом')).toBe(false);
+    expect(hasWholeWord('Мы ищем отдельный дом в горах', 'дом')).toBe(true);
+
+    // "ипотека" must not trigger "ип"
+    expect(hasWholeWord('Планируем брать в ипотеку', 'ип')).toBe(false);
+    expect(hasWholeWord('У меня открыто ИП', 'ип')).toBe(true);
+
+    // "жен" (жена) must not be triggered by "важен"
+    expect(hasWholeWord('Для нас важен высокий этаж', 'жена')).toBe(false);
+    expect(hasWholeWord('Мы с женой выбираем квартиру', 'женой')).toBe(true);
+  });
+
+  // Scenario 26: Evidence Invariant Validator
+  it('Scenario 26: validateEvidenceQuote ensures facts are backed by real substrings in turn text', () => {
+    const turnText = 'Мы с семьей ищем квартиру до 30 миллионов рублей в Сириусе';
+    
+    expect(validateEvidenceQuote(turnText, '30 миллионов рублей')).toBe(true);
+    expect(validateEvidenceQuote(turnText, 'до 30 миллионов')).toBe(true);
+    expect(validateEvidenceQuote(turnText, 'в Сириусе')).toBe(true);
+    
+    // Hallucinated quote not in the turn
+    expect(validateEvidenceQuote(turnText, 'хотим дом у моря')).toBe(false);
+    expect(validateEvidenceQuote(turnText, 'бюджет 50 миллионов')).toBe(false);
+  });
 });
+

@@ -16,6 +16,7 @@ import {
   getFirstCallSuggestion,
   FIRST_CALL_METRICS_LIST,
 } from './src/services/firstCallScriptEngine';
+import { selectCandidateRules } from './src/services/candidateRules';
 
 dotenv.config();
 
@@ -58,58 +59,6 @@ function getSalesRules() {
     console.error('Failed to read sales-rules.json:', err);
   }
   return [];
-}
-
-/**
- * Filter 0-4 most relevant candidate rules to drastically reduce prompt size and analysis latency.
- */
-function selectCandidateRules(allRules: any[], lastClientText: string, stage: string): any[] {
-  const lower = (lastClientText || '').toLowerCase();
-  const selected = new Map<string, any>();
-
-  for (const r of allRules) {
-    if (r.id === 'P37' && (lower.includes('дорого') || lower.includes('цен') || lower.includes('космос') || lower.includes('миллион'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'clarify_for_myself_format' && lower.includes('для себя')) {
-      selected.set(r.id, r);
-    } else if (r.id === 'P48' && (lower.includes('жить') || lower.includes('переезд') || lower.includes('пмж') || lower.includes('семьей'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'P44' && (lower.includes('анап') || lower.includes('краснодар'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'clarify_contact_reason' && (lower.includes('просто') || lower.includes('смотр') || lower.includes('присматр') || lower.includes('интернет'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'motive_investment' && (lower.includes('инвест') || lower.includes('доход') || lower.includes('сдач') || lower.includes('аренд'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'decision_maker_involvement' && (lower.includes('муж') || lower.includes('жен') || lower.includes('супруг') || lower.includes('партнер'))) {
-      selected.set(r.id, r);
-    } else if (r.id === 'specific_object_material' && (lower.includes('фот') || lower.includes('планировк') || lower.includes('материал') || lower.includes('пришл') || lower.includes('скиньте'))) {
-      selected.set(r.id, r);
-    }
-  }
-
-  // If stage matches or few selected, add stage-appropriate rules up to 4
-  if (stage === 'contact' || stage === 'diagnostics') {
-    for (const r of allRules) {
-      if (selected.size >= 4) break;
-      if (['clarify_contact_reason', 'deal_timeline', 'budget_uncertainty', 'clarify_for_myself_format'].includes(r.id)) {
-        selected.set(r.id, r);
-      }
-    }
-  } else if (stage === 'next_step_agreement') {
-    for (const r of allRules) {
-      if (selected.size >= 4) break;
-      if (['propose_next_step_zoom', 'summarize_criteria'].includes(r.id)) {
-        selected.set(r.id, r);
-      }
-    }
-  }
-
-  // Fallback if still empty: top 3 rules
-  if (selected.size === 0) {
-    allRules.slice(0, 3).forEach((r: any) => selected.set(r.id, r));
-  }
-
-  return Array.from(selected.values()).slice(0, 4);
 }
 
 // Health Check

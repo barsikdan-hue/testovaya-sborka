@@ -906,9 +906,40 @@ export const App: React.FC = () => {
   };
 
   const handleUseSuggestion = (reply: SuggestedReply) => {
-    // Андрей произносит подсказанную реплику
-    handleAddFinalTurn('agent', reply.text);
+    // Реплика отмечается как использованная без инъекции дублирующего транскрипта
+    // (реальный звук Андрея будет естественным образом распознан STT микрофона)
+    const now = Date.now();
+    const updatedReply: SuggestedReply = {
+      ...reply,
+      used: true,
+      usedAt: now,
+    };
+
+    suggestedRepliesHistoryRef.current = suggestedRepliesHistoryRef.current.map((item) =>
+      item.id === reply.id ? updatedReply : item
+    );
+    setSuggestedRepliesHistory([...suggestedRepliesHistoryRef.current]);
+
+    // Фиксация в askedQuestions для работы Semantic Anti-Repeat
+    const questionText = reply.text.trim();
+    if (questionText) {
+      setConversationState((prevState) => {
+        const currentQuestions = prevState.askedQuestions || [];
+        const isAlreadyTracked = currentQuestions.some(
+          (q) => q.toLowerCase().trim() === questionText.toLowerCase()
+        );
+        const nextState = {
+          ...prevState,
+          askedQuestions: isAlreadyTracked ? currentQuestions : [...currentQuestions, questionText],
+        };
+        conversationStateRef.current = nextState;
+        return nextState;
+      });
+    }
+
     setShouldSuggest(false);
+    setCurrentSuggestion(null);
+    currentSuggestionRef.current = null;
     showToast('Реплика отмечена как использованная');
   };
 
