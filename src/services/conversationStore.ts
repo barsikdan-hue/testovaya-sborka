@@ -211,7 +211,7 @@ export function mergeFactsDelta(
       case 'goal':
         next.goal = {
           value: sanitizedVal,
-          evidenceTurnIds: Array.from(new Set([...next.goal.evidenceTurnIds, evidenceTurnId])),
+          evidenceTurnIds: Array.from(new Set([...(next.goal?.evidenceTurnIds || []), evidenceTurnId])),
           needsClarification,
         };
         break;
@@ -219,7 +219,7 @@ export function mergeFactsDelta(
       case 'location':
         next.location = {
           value: sanitizedVal,
-          evidenceTurnIds: Array.from(new Set([...next.location.evidenceTurnIds, evidenceTurnId])),
+          evidenceTurnIds: Array.from(new Set([...(next.location?.evidenceTurnIds || []), evidenceTurnId])),
           needsClarification,
         };
         break;
@@ -236,7 +236,7 @@ export function mergeFactsDelta(
 
         next.budget = {
           value: isFlex ? 'Гибкий (зависит от объекта)' : sanitizedVal,
-          evidenceTurnIds: Array.from(new Set([...next.budget.evidenceTurnIds, evidenceTurnId])),
+          evidenceTurnIds: Array.from(new Set([...(next.budget?.evidenceTurnIds || []), evidenceTurnId])),
           needsClarification,
           isFlexible: isFlex,
           comment: isFlex ? sanitizedVal : comment,
@@ -248,7 +248,7 @@ export function mergeFactsDelta(
       case 'payment_method':
         next.paymentMethod = {
           value: sanitizedVal,
-          evidenceTurnIds: Array.from(new Set([...next.paymentMethod.evidenceTurnIds, evidenceTurnId])),
+          evidenceTurnIds: Array.from(new Set([...(next.paymentMethod?.evidenceTurnIds || []), evidenceTurnId])),
           needsClarification,
         };
         break;

@@ -1,3 +1,5 @@
+import { float32ToPcm16, resampleMonoFloat32 } from './resampler';
+
 export interface AudioCaptureCallbacks {
   onMicChunk?: (chunk: ArrayBuffer) => void;
   onCallChunk?: (chunk: ArrayBuffer) => void;
@@ -21,6 +23,7 @@ export class DualAudioCapture {
 
   private isMicActive = false;
   private isCallActive = false;
+  private _isPaused = false;
 
   constructor(callbacks: AudioCaptureCallbacks) {
     this.callbacks = callbacks;
@@ -32,6 +35,14 @@ export class DualAudioCapture {
 
   public get isCallAudioActive(): boolean {
     return this.isCallActive;
+  }
+
+  public get isPaused(): boolean {
+    return this._isPaused;
+  }
+
+  public set isPaused(val: boolean) {
+    this._isPaused = val;
   }
 
   /**
@@ -67,14 +78,18 @@ export class DualAudioCapture {
       this.micProcessor = this.micContext.createScriptProcessor(2048, 1, 1);
 
       this.micProcessor.onaudioprocess = (e) => {
+        if (this._isPaused) {
+          if (this.callbacks.onMicLevel) {
+            this.callbacks.onMicLevel(0, -100);
+          }
+          return;
+        }
+
         const inputData = e.inputBuffer.getChannelData(0);
-        // Calculate RMS Level & dB
+        // Calculate RMS Level & dB on raw input
         let sumSq = 0;
-        const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          sumSq += s * s;
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          sumSq += inputData[i] * inputData[i];
         }
 
         const rms = Math.sqrt(sumSq / inputData.length);
@@ -85,8 +100,13 @@ export class DualAudioCapture {
           this.callbacks.onMicLevel(normalizedLevel, Math.round(db));
         }
 
+        // Resample mono Float32 to strictly 16000 Hz if hardware runs at 44.1/48kHz
+        const actualSampleRate = this.micContext?.sampleRate || 16000;
+        const resampledData = resampleMonoFloat32(inputData, actualSampleRate, 16000);
+        const pcm16 = float32ToPcm16(resampledData);
+
         if (this.callbacks.onMicChunk) {
-          this.callbacks.onMicChunk(pcm16.buffer);
+          this.callbacks.onMicChunk(pcm16.buffer as ArrayBuffer);
         }
       };
 
@@ -163,13 +183,17 @@ export class DualAudioCapture {
       this.callProcessor = this.callContext.createScriptProcessor(2048, 1, 1);
 
       this.callProcessor.onaudioprocess = (e) => {
+        if (this._isPaused) {
+          if (this.callbacks.onCallLevel) {
+            this.callbacks.onCallLevel(0, -100);
+          }
+          return;
+        }
+
         const inputData = e.inputBuffer.getChannelData(0);
         let sumSq = 0;
-        const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          sumSq += s * s;
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          sumSq += inputData[i] * inputData[i];
         }
 
         const rms = Math.sqrt(sumSq / inputData.length);
@@ -180,8 +204,13 @@ export class DualAudioCapture {
           this.callbacks.onCallLevel(normalizedLevel, Math.round(db));
         }
 
+        // Resample mono Float32 to strictly 16000 Hz if hardware runs at 44.1/48kHz
+        const actualSampleRate = this.callContext?.sampleRate || 16000;
+        const resampledData = resampleMonoFloat32(inputData, actualSampleRate, 16000);
+        const pcm16 = float32ToPcm16(resampledData);
+
         if (this.callbacks.onCallChunk) {
-          this.callbacks.onCallChunk(pcm16.buffer);
+          this.callbacks.onCallChunk(pcm16.buffer as ArrayBuffer);
         }
       };
 

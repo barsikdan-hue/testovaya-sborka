@@ -484,6 +484,14 @@ export interface DiagnosticsData {
   lastReceivedTextTime: number | null;
   lastAnalysisTime: number | null;
   reconnectCount: number;
+  micReconnectCount?: number;
+  clientReconnectCount?: number;
+  droppedAudioChunksMic?: number;
+  droppedAudioChunksCall?: number;
+  currentMicSampleRate?: number;
+  currentCallSampleRate?: number;
+  rejectedAnalysisCount?: number;
+  lastRejectedReason?: string | null;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   analysisRequestsCount: number;

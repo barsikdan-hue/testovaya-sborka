@@ -19,7 +19,7 @@ import {
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
 const ANALYSIS_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
@@ -60,6 +60,58 @@ function getSalesRules() {
   return [];
 }
 
+/**
+ * Filter 0-4 most relevant candidate rules to drastically reduce prompt size and analysis latency.
+ */
+function selectCandidateRules(allRules: any[], lastClientText: string, stage: string): any[] {
+  const lower = (lastClientText || '').toLowerCase();
+  const selected = new Map<string, any>();
+
+  for (const r of allRules) {
+    if (r.id === 'P37' && (lower.includes('дорого') || lower.includes('цен') || lower.includes('космос') || lower.includes('миллион'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'clarify_for_myself_format' && lower.includes('для себя')) {
+      selected.set(r.id, r);
+    } else if (r.id === 'P48' && (lower.includes('жить') || lower.includes('переезд') || lower.includes('пмж') || lower.includes('семьей'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'P44' && (lower.includes('анап') || lower.includes('краснодар'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'clarify_contact_reason' && (lower.includes('просто') || lower.includes('смотр') || lower.includes('присматр') || lower.includes('интернет'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'motive_investment' && (lower.includes('инвест') || lower.includes('доход') || lower.includes('сдач') || lower.includes('аренд'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'decision_maker_involvement' && (lower.includes('муж') || lower.includes('жен') || lower.includes('супруг') || lower.includes('партнер'))) {
+      selected.set(r.id, r);
+    } else if (r.id === 'specific_object_material' && (lower.includes('фот') || lower.includes('планировк') || lower.includes('материал') || lower.includes('пришл') || lower.includes('скиньте'))) {
+      selected.set(r.id, r);
+    }
+  }
+
+  // If stage matches or few selected, add stage-appropriate rules up to 4
+  if (stage === 'contact' || stage === 'diagnostics') {
+    for (const r of allRules) {
+      if (selected.size >= 4) break;
+      if (['clarify_contact_reason', 'deal_timeline', 'budget_uncertainty', 'clarify_for_myself_format'].includes(r.id)) {
+        selected.set(r.id, r);
+      }
+    }
+  } else if (stage === 'next_step_agreement') {
+    for (const r of allRules) {
+      if (selected.size >= 4) break;
+      if (['propose_next_step_zoom', 'summarize_criteria'].includes(r.id)) {
+        selected.set(r.id, r);
+      }
+    }
+  }
+
+  // Fallback if still empty: top 3 rules
+  if (selected.size === 0) {
+    allRules.slice(0, 3).forEach((r: any) => selected.set(r.id, r));
+  }
+
+  return Array.from(selected.values()).slice(0, 4);
+}
+
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({
@@ -76,8 +128,51 @@ app.get('/api/rules', (req, res) => {
   res.json({ rules: getSalesRules() });
 });
 
+// Minimal Rate Protection (Requirement 12)
+// In-memory sliding window
+interface RateLimitEntry {
+  timestamps: number[];
+}
+
+const rateLimitStore: Record<string, RateLimitEntry> = {};
+
+function checkRateLimit(
+  key: string,
+  maxRequests: number,
+  windowMs: number
+): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  if (!rateLimitStore[key]) {
+    rateLimitStore[key] = { timestamps: [now] };
+    return { allowed: true, retryAfterMs: 0 };
+  }
+
+  // Filter out timestamps outside window
+  rateLimitStore[key].timestamps = rateLimitStore[key].timestamps.filter((ts) => now - ts < windowMs);
+
+  if (rateLimitStore[key].timestamps.length >= maxRequests) {
+    const oldest = rateLimitStore[key].timestamps[0];
+    const retryAfterMs = Math.max(0, windowMs - (now - oldest));
+    return { allowed: false, retryAfterMs };
+  }
+
+  rateLimitStore[key].timestamps.push(now);
+  return { allowed: true, retryAfterMs: 0 };
+}
+
 // Real Gemini Live & Analysis Connection Verification
 app.get('/api/gemini/check', async (req, res) => {
+  // Rate limit: max 2 req / 10s per IP
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'ip_unknown';
+  const rateCheck = checkRateLimit(`check_${clientIp}`, 2, 10000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Превышен лимит проверок подключения Gemini API (максимум 2 запроса за 10 секунд).',
+      retryAfterMs: rateCheck.retryAfterMs,
+    });
+  }
+
   const startTime = Date.now();
   const diagnostics: Record<string, any> = {
     apiKeyConfigured: !!process.env.GEMINI_API_KEY,
@@ -159,26 +254,6 @@ app.get('/api/gemini/check', async (req, res) => {
   }
 });
 
-// Ephemeral Auth Token Minting (Server-Side Secret Protection)
-app.post('/api/gemini/token', async (req, res) => {
-  try {
-    const ai = getAI();
-    // Use official authTokens.create from @google/genai
-    const tokenObj = await (ai as any).authTokens.create({});
-    res.json({
-      token: tokenObj.name,
-      transcribeModel: TRANSCRIBE_MODEL,
-      expiresInSeconds: 1800,
-    });
-  } catch (err: any) {
-    console.error('Failed to create ephemeral token:', err);
-    res.status(500).json({
-      error: 'Не удалось создать временный токен авторизации.',
-      details: err.message || String(err),
-    });
-  }
-});
-
 // Structured Analysis Endpoint
 app.post('/api/analyze', async (req, res) => {
   const startTime = Date.now();
@@ -186,6 +261,16 @@ app.post('/api/analyze', async (req, res) => {
 
   if (!sessionId || typeof revision !== 'number' || !Array.isArray(newTurns) || newTurns.length === 0) {
     return res.status(400).json({ error: 'Некорректные параметры запроса анализа' });
+  }
+
+  // Rate limit: max 15 req / 10s per session (Requirement 12)
+  const rateCheck = checkRateLimit(`analyze_${sessionId}`, 15, 10000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Превышен лимит запросов анализа сессии (максимум 15 запросов за 10 секунд).',
+      retryAfterMs: rateCheck.retryAfterMs,
+    });
   }
 
   // REQUIREMENT 1: Реплики Андрея не должны запускать анализ Gemini!
@@ -247,7 +332,7 @@ app.post('/api/analyze', async (req, res) => {
       }
     });
 
-    const formattedRecentTurns = (recentTurns || []).map((t: any) => {
+    const formattedRecentTurns = (recentTurns || []).slice(-6).map((t: any) => {
       return `[ID: ${t.id}] ${t.speaker === 'agent' ? 'Менеджер Андрей' : t.speaker === 'client' ? 'Клиент' : 'Собеседник'}: «${t.text}»`;
     }).join('\n');
 
@@ -255,13 +340,18 @@ app.post('/api/analyze', async (req, res) => {
       return `[ID: ${t.id}] ${t.speaker === 'agent' ? 'Менеджер Андрей' : t.speaker === 'client' ? 'Клиент' : 'Собеседник'}: «${t.text}»`;
     }).join('\n');
 
-    const rulesContext = rules.map((r: any) =>
-      `Правило ${r.id} («${r.title}»):
+    // Requirement 21: Select 0-4 candidate rules instead of transmitting 15+ full rules
+    const lastClientForCandidate = [...newTurns, ...(recentTurns || [])].reverse().find((t: any) => t.speaker === 'client');
+    const candidateRules = selectCandidateRules(rules, lastClientForCandidate?.text || '', currentState?.stage || 'contact');
+
+    const rulesContext = candidateRules.length > 0
+      ? candidateRules.map((r: any) =>
+          `Правило ${r.id} («${r.title}»):
 - Применимость: ${r.applicability}
-- Исключения: ${r.exclusions}
 - Цель: ${r.objective}
-- Примеры уместных реплик: ${r.suggestedQuestions.join(' / ')}`
-    ).join('\n\n');
+- Примеры: ${r.suggestedQuestions.slice(0, 2).join(' / ')}`
+        ).join('\n\n')
+      : 'Нет специфического правила (выбирай наиболее подходящий вопрос по скрипту первого звонка).';
 
     const currentStateSummary = JSON.stringify(currentState || {}, null, 2);
 
@@ -923,15 +1013,55 @@ ${formattedNewTurns}
 
 // Andrei OS Feedback Endpoint (Real feedback from Andrei on rule quality)
 app.post('/api/feedback', (req, res) => {
-  const { sessionId, revision, ruleId, turnId, feedback, actionType, text } = req.body;
-  console.log(`[ANDREI OS FEEDBACK] session=${sessionId} rev=${revision} rule=${ruleId} feedback=${feedback} turn=${turnId} action=${actionType}`);
-  res.json({ ok: true, recordedAt: Date.now() });
+  try {
+    const {
+      sessionId,
+      revision,
+      ruleId,
+      turnId,
+      feedback,
+      rating,
+      actionType,
+      text,
+      suggestionText,
+      comment,
+    } = req.body;
+
+    const normalizedRating = rating || feedback || 'accepted';
+    const effectiveSessionId = sessionId || `session_${Date.now()}`;
+    const effectiveRuleId = ruleId ? String(ruleId) : null;
+
+    console.log(
+      `[ANDREI OS FEEDBACK] session=${effectiveSessionId} rule=${effectiveRuleId} rating=${normalizedRating} comment=${comment || ''}`
+    );
+
+    res.json({
+      ok: true,
+      sessionId: effectiveSessionId,
+      ruleId: effectiveRuleId,
+      rating: normalizedRating,
+      recordedAt: Date.now(),
+    });
+  } catch (err: any) {
+    console.error('Feedback recording error:', err);
+    res.status(500).json({ ok: false, error: 'Ошибка сохранения отзыва' });
+  }
 });
 
 // Final Call Summary Endpoint
 app.post('/api/summary', async (req, res) => {
   const { sessionId, turns, state } = req.body;
   const startTime = Date.now();
+
+  // Rate limit: max 3 req / 10s per session (Requirement 12)
+  const rateCheck = checkRateLimit(`summary_${sessionId || 'global'}`, 3, 10000);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Превышен лимит запросов формирования итогов (максимум 3 запроса за 10 секунд).',
+      retryAfterMs: rateCheck.retryAfterMs,
+    });
+  }
 
   const emptyFallbackSummary = {
     clientGoal: state?.goal?.value || 'Недостаточно подтверждённых данных',
@@ -1095,6 +1225,26 @@ async function start() {
     let reconnectAttempts = 0;
     const MAX_RECONNECTS = 3;
 
+    // Requirement 11: Bounded pre-connect FIFO queue so initial speech isn't lost before session opens
+    const preConnectAudioQueue: Array<{ data: string; mimeType: string }> = [];
+    const MAX_PRECONNECT_CHUNKS = 40; // ~1.5 - 2s of audio
+    let isLiveSessionReady = false;
+
+    function flushPreConnectQueue() {
+      if (!geminiLiveSession || !isLiveSessionReady) return;
+      while (preConnectAudioQueue.length > 0) {
+        const item = preConnectAudioQueue.shift();
+        if (item) {
+          try {
+            geminiLiveSession.sendRealtimeInput({ audio: item });
+          } catch (e) {
+            console.error('[Live STT] Error flushing pre-connect buffer:', e);
+            break;
+          }
+        }
+      }
+    }
+
     async function initGeminiSession() {
       if (isClosed) return;
       try {
@@ -1112,6 +1262,8 @@ async function start() {
           callbacks: {
             onopen: () => {
               console.log(`[Live STT] Session opened for ${role}`);
+              isLiveSessionReady = true;
+              flushPreConnectQueue();
               if (!isClosed && clientWs.readyState === WebSocket.OPEN) {
                 clientWs.send(JSON.stringify({
                   type: 'status',
@@ -1157,6 +1309,7 @@ async function start() {
             },
             onclose: (event: any) => {
               console.log(`[Live STT] Closed for ${role}: code ${event.code}, reason: ${event.reason}`);
+              isLiveSessionReady = false;
               if (!isClosed && clientWs.readyState === WebSocket.OPEN) {
                 // Check if managed session rollover before 10-minute limit or unexpected close
                 if (reconnectAttempts < MAX_RECONNECTS) {
@@ -1207,30 +1360,40 @@ async function start() {
     await initGeminiSession();
 
     clientWs.on('message', (data: any, isBinary: boolean) => {
-      if (isClosed || !geminiLiveSession) return;
+      if (isClosed) return;
 
       try {
+        let audioItem: { data: string; mimeType: string } | null = null;
+
         if (isBinary) {
           // Binary PCM16 little-endian audio chunk
           const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-          geminiLiveSession.sendRealtimeInput({
-            audio: {
-              data: buffer.toString('base64'),
-              mimeType: 'audio/pcm;rate=16000',
-            },
-          });
+          audioItem = {
+            data: buffer.toString('base64'),
+            mimeType: 'audio/pcm;rate=16000',
+          };
         } else {
           // JSON message
           const msg = JSON.parse(data.toString());
           if (msg.type === 'audio' && msg.data) {
-            geminiLiveSession.sendRealtimeInput({
-              audio: {
-                data: msg.data,
-                mimeType: msg.mimeType || 'audio/pcm;rate=16000',
-              },
-            });
+            audioItem = {
+              data: msg.data,
+              mimeType: msg.mimeType || 'audio/pcm;rate=16000',
+            };
           } else if (msg.type === 'pause') {
             console.log(`[Live STT] Paused for ${role}`);
+          }
+        }
+
+        if (audioItem) {
+          if (geminiLiveSession && isLiveSessionReady) {
+            geminiLiveSession.sendRealtimeInput({ audio: audioItem });
+          } else {
+            // Buffer into pre-connect queue with strict cap
+            if (preConnectAudioQueue.length >= MAX_PRECONNECT_CHUNKS) {
+              preConnectAudioQueue.shift();
+            }
+            preConnectAudioQueue.push(audioItem);
           }
         }
       } catch (err: any) {
@@ -1240,6 +1403,8 @@ async function start() {
 
     clientWs.on('close', async () => {
       isClosed = true;
+      isLiveSessionReady = false;
+      preConnectAudioQueue.length = 0;
       console.log(`[WS] Client disconnected for ${role}`);
       if (geminiLiveSession) {
         try {

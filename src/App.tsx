@@ -30,6 +30,8 @@ import { SalesDecisionEngine, DEFAULT_RULES } from './services/salesDecisionEngi
 import { AnalysisProvider } from './services/analysisProvider';
 import { createInitialState, mergeFactsDelta } from './services/conversationStore';
 import { evaluateFirstCallScript } from './services/firstCallScriptEngine';
+import { isDuplicateFinalTurn } from './services/sttDedup';
+import { extractDeterministicFacts } from './services/deterministicFacts';
 import {
   getAllCallSessions,
   saveCallSession,
@@ -93,6 +95,8 @@ export const App: React.FC = () => {
   const suggestionLockedRef = useRef<boolean>(false);
   const lastClientRevisionRef = useRef<number>(0);
   const currentSuggestionRef = useRef<SuggestedReply | null>(null);
+  const pendingSuggestionRef = useRef<SuggestedReply | null>(null);
+  const isPausedRef = useRef<boolean>(isPaused);
   const [isRefiningContext, setIsRefiningContext] = useState<boolean>(false);
 
   // Diagnostics
@@ -150,6 +154,51 @@ export const App: React.FC = () => {
     setTimeout(() => setToastMessage(null), 4000);
   }, []);
 
+  // Sync isPaused with ref and audio capture instance (Requirement 3)
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+    if (audioCaptureRef.current) {
+      audioCaptureRef.current.isPaused = isPaused;
+    }
+  }, [isPaused]);
+
+  // Telemetry diagnostics poll (Requirement 15)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const stats = analysisProviderRef.current.getStats();
+      setDiagnostics((d) => ({
+        ...d,
+        droppedAudioChunksMic: agentChannelRef.current?.droppedAudioChunksCount || 0,
+        droppedAudioChunksCall: clientChannelRef.current?.droppedAudioChunksCount || 0,
+        micReconnectCount: agentChannelRef.current?.reconnectCount || 0,
+        clientReconnectCount: clientChannelRef.current?.reconnectCount || 0,
+        currentMicSampleRate: 16000,
+        currentCallSampleRate: 16000,
+        rejectedAnalysisCount: stats.rejectedCount,
+        lastRejectedReason: stats.lastRejectedReason,
+        analysisRequestsCount: stats.requestsCount,
+        cancelledRequestsCount: stats.cancelledCount,
+      }));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Audio lifecycle cleanup on window unload & unmount (Requirement 8)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      audioCaptureRef.current?.stopAll();
+      agentChannelRef.current?.disconnect();
+      clientChannelRef.current?.disconnect();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      audioCaptureRef.current?.stopAll();
+      agentChannelRef.current?.disconnect();
+      clientChannelRef.current?.disconnect();
+    };
+  }, []);
+
   // Load initial rules and past sessions on mount
   useEffect(() => {
     fetch('/api/rules')
@@ -203,6 +252,13 @@ export const App: React.FC = () => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
+      // REQUIREMENT 10: Deduplicate duplicate final turns within 1.5s window
+      const lastTurn = turnsRef.current[turnsRef.current.length - 1];
+      if (isDuplicateFinalTurn(lastTurn, speaker, trimmed, timestamp, 1500)) {
+        console.log(`[Copilot] Отклонен дубликат STT turn (${speaker}): «${trimmed}»`);
+        return;
+      }
+
       if (!sessionIdRef.current) {
         const newId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         sessionIdRef.current = newId;
@@ -229,7 +285,8 @@ export const App: React.FC = () => {
       setTurns(turnsRef.current);
 
       // =========================================================================
-      // REQUIREMENT 1 & 2 & 4: АНАЛИЗИРОВАТЬ ТОЛЬКО РЕПЛИКИ КЛИЕНТА. РЕЧЬ АНДРЕЯ.
+      // REQUIREMENT 1: АНАЛИЗИРОВАТЬ ТОЛЬКО РЕПЛИКИ КЛИЕНТА. РЕЧЬ АНДРЕЯ.
+      // НЕ ОТМЕНЯТЬ АНАЛИЗ КЛИЕНТА!
       // =========================================================================
       if (speaker === 'agent') {
         // Заморозить текущую карточку подсказки
@@ -238,13 +295,8 @@ export const App: React.FC = () => {
           ...prev,
           suggestionLocked: true,
           lockedSuggestionId: currentSuggestionRef.current?.id || null,
-          lockedAt: Date.now(),
+          lockedAt: prev.lockedAt || Date.now(),
         }));
-
-        // Отменить отложенный анализ и сбросить индикатор ожидания
-        analysisProviderRef.current.cancelPending();
-        setIsAnalyzing(false);
-        setIsRefiningContext(false);
 
         // Если Андрей задал вопрос — фиксируем в askedQuestions, чтобы не повторять
         if (trimmed.endsWith('?')) {
@@ -267,6 +319,7 @@ export const App: React.FC = () => {
         //   не менять stage;
         //   не менять objection;
         //   не менять текущий вопрос.
+        //   НО анализ реплики клиента продолжает выполняться в фоне!
         return;
       }
 
@@ -291,14 +344,36 @@ export const App: React.FC = () => {
         return;
       }
 
-      // REQUIREMENT 6, 19, 20: Фильтрация бессодержательных и коротких (< 12 симв) реплик клиента
-      if (trimmed.length < 12 || !isSubstantiveClientTurn(trimmed)) {
-        console.log('[Copilot] Пропуск короткой (< 12 симв) или бессодержательной реплики клиента:', trimmed);
+      // REQUIREMENT 4: СОХРАНЯТЬ ФАКТЫ ПРИ ЛЮБОЙ РЕПЛИКЕ КЛИЕНТА
+      // Извлекаем бюджет, локацию, цель, сроки детерминированно, гарантируя сохранение
+      const extractedFacts = extractDeterministicFacts(trimmed, newTurn.id);
+      if (extractedFacts.length > 0) {
+        setConversationState((prev) => {
+          const turnLookup: Record<string, string> = {};
+          turnsRef.current.forEach((t) => {
+            turnLookup[t.id] = t.text;
+          });
+          const nextState = mergeFactsDelta(
+            prev,
+            extractedFacts as any,
+            prev.stage,
+            undefined,
+            nextRev,
+            turnLookup
+          );
+          conversationStateRef.current = nextState;
+          return nextState;
+        });
+      }
+
+      // Фильтрация бессодержательных реплик клиента
+      if (!isSubstantiveClientTurn(trimmed)) {
+        console.log('[Copilot] Пропуск бессодержательной реплики клиента:', trimmed);
         return;
       }
 
       // REQUIREMENT 5: Быстрый локальный режим для возражений (detectLocalObjection)
-      // Срабатывает МГНОВЕННО без отправки запроса к Gemini API (экономия квоты)
+      // Срабатывает МГНОВЕННО без отправки запроса к Gemini API (факты уже сохранены выше!)
       const localObjection = detectLocalObjection(trimmed, conversationStateRef.current);
       if (localObjection) {
         console.log('[Copilot] Локально распознано возражение без обращения к Gemini:', localObjection.category);
@@ -398,13 +473,6 @@ export const App: React.FC = () => {
             lastErrorMessage: null,
           }));
 
-          // REQUIREMENT 2: Если Андрей уже начал говорить, пока шёл ответ Gemini,
-          // НЕ перезаписывать замороженную карточку!
-          if (suggestionLockedRef.current) {
-            console.warn('[Copilot] Ответ Gemini проигнорирован: Андрей уже начал говорить (suggestionLocked=true)');
-            return;
-          }
-
           // Build lookup of turns for quote sanitization
           const turnTextLookup: Record<string, string> = {};
           for (const t of turnsRef.current) {
@@ -412,6 +480,7 @@ export const App: React.FC = () => {
           }
 
           // Update conversation state with factsDelta, stage, spinDelta, unconfirmed hypotheses, and scriptProgress
+          // NOTE: ConversationState updates MUST ALWAYS apply even if suggestion card is locked!
           setConversationState((prevState) => {
             const nextState = mergeFactsDelta(
               prevState,
@@ -457,17 +526,29 @@ export const App: React.FC = () => {
               confidenceStatus: 'high',
             };
 
+            suggestedRepliesHistoryRef.current = [suggestionObj, ...suggestedRepliesHistoryRef.current];
+            setSuggestedRepliesHistory(suggestedRepliesHistoryRef.current);
+
+            // If Andrei is currently speaking (suggestionLocked=true), preserve locked card and save fresh suggestion
+            if (suggestionLockedRef.current) {
+              console.log('[Copilot] ConversationState обновлён, карточка сохранена в pendingSuggestionRef (Андрей говорит)');
+              pendingSuggestionRef.current = suggestionObj;
+              return;
+            }
+
             setCurrentSuggestion(suggestionObj);
             currentSuggestionRef.current = suggestionObj;
             setShouldSuggest(true);
-            suggestedRepliesHistoryRef.current = [suggestionObj, ...suggestedRepliesHistoryRef.current];
-            setSuggestedRepliesHistory(suggestedRepliesHistoryRef.current);
+            pendingSuggestionRef.current = null;
           } else {
             // Если actionType === 'WAIT', не сбрасываем текущую карточку резко
             if (analysisResult.actionType !== 'WAIT') {
-              setCurrentSuggestion(null);
-              currentSuggestionRef.current = null;
-              setShouldSuggest(false);
+              if (!suggestionLockedRef.current) {
+                setCurrentSuggestion(null);
+                currentSuggestionRef.current = null;
+                setShouldSuggest(false);
+              }
+              pendingSuggestionRef.current = null;
             }
           }
         },
@@ -510,12 +591,12 @@ export const App: React.FC = () => {
       // 1. Dual Audio Capture
       const audioCapture = new DualAudioCapture({
         onMicChunk: (chunk) => {
-          if (!isPaused && agentChannelRef.current) {
+          if (!isPausedRef.current && agentChannelRef.current) {
             agentChannelRef.current.sendAudioChunk(chunk);
           }
         },
         onCallChunk: (chunk) => {
-          if (!isPaused && clientChannelRef.current) {
+          if (!isPausedRef.current && clientChannelRef.current) {
             clientChannelRef.current.sendAudioChunk(chunk);
           }
         },
@@ -570,6 +651,19 @@ export const App: React.FC = () => {
               lockedSuggestionId: currentSuggestionRef.current?.id || null,
               lockedAt: prev.lockedAt || Date.now(),
             }));
+          } else {
+            suggestionLockedRef.current = false;
+            setSuggestionLockState((prev) => ({
+              ...prev,
+              suggestionLocked: false,
+            }));
+            if (pendingSuggestionRef.current) {
+              console.log('[Copilot] Андрей закончил говорить: отображение готовой подсказки из pendingSuggestionRef');
+              setCurrentSuggestion(pendingSuggestionRef.current);
+              currentSuggestionRef.current = pendingSuggestionRef.current;
+              setShouldSuggest(true);
+              pendingSuggestionRef.current = null;
+            }
           }
         },
         onError: (role, msg) => {
@@ -828,24 +922,29 @@ export const App: React.FC = () => {
     comment?: string
   ) => {
     try {
-      await fetch('/api/feedback', {
+      const res = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ruleId: suggestion.candidateRuleId,
+          ruleId: suggestion.candidateRuleId ?? null,
           suggestionText: suggestion.text,
           rating,
+          feedback: rating === 'accurate' ? 'accepted' : 'dismissed',
           comment,
-          sessionId: sessionIdRef.current || sessionId,
+          sessionId: sessionIdRef.current || sessionId || `session_${Date.now()}`,
         }),
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       showToast(
         rating === 'accurate'
           ? 'Оценка сохранена: подсказка точная'
           : 'Оценка сохранена: подсказка неточная (учтено для калибровки)'
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to submit feedback:', err);
+      showToast(`Ошибка сохранения оценки: ${err?.message || 'сбой сети'}`);
     }
   };
 

@@ -78,12 +78,14 @@ export const DiagnosticsDrawer: React.FC<DiagnosticsDrawerProps> = ({
               </div>
               <div className="flex justify-between items-center py-1">
                 <span>Формат аудиопотока:</span>
-                <span className="font-mono text-stone-900">PCM16 Mono 16000Hz</span>
+                <span className="font-mono text-stone-900">
+                  PCM16 Mono 16000Hz (вход: mic {diagnostics.currentMicSampleRate || 16000}Hz / call {diagnostics.currentCallSampleRate || 16000}Hz)
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Optimization & Quota Metrics (Requirement 16) */}
+          {/* Optimization & Quota Metrics (Requirement 16 & 15) */}
           <div className="bg-stone-50 rounded-lg p-3 border border-teal-200/80 space-y-2">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-stone-800 text-xs">Оптимизация расхода Gemini API</div>
@@ -112,14 +114,27 @@ export const DiagnosticsDrawer: React.FC<DiagnosticsDrawerProps> = ({
               </div>
 
               <div className="bg-white p-2 rounded border border-stone-200">
-                <span className="text-[10px] text-stone-400 block">Задержка Gemini</span>
-                <span className="font-mono font-semibold text-stone-900 text-sm">
-                  {diagnostics.analysisLatencyMs ? `${diagnostics.analysisLatencyMs} мс` : '—'}
+                <span className="text-[10px] text-stone-400 block">Отклонено шлюзом</span>
+                <span className="font-mono font-semibold text-stone-700 text-sm">
+                  {diagnostics.rejectedAnalysisCount || 0}
                 </span>
               </div>
             </div>
 
+            {diagnostics.lastRejectedReason && (
+              <div className="bg-white p-2 rounded border border-stone-200 text-[11px] text-stone-600">
+                <span className="text-stone-400 block text-[10px]">Причина отклонения:</span>
+                <span className="font-medium text-stone-800">{diagnostics.lastRejectedReason}</span>
+              </div>
+            )}
+
             <div className="bg-white p-2 rounded border border-stone-200 space-y-1 text-[11px]">
+              <div className="flex justify-between items-center text-stone-500">
+                <span>Задержка ответа:</span>
+                <span className="font-mono font-semibold text-stone-900">
+                  {diagnostics.analysisLatencyMs ? `${diagnostics.analysisLatencyMs} мс` : '—'}
+                </span>
+              </div>
               <div className="flex justify-between items-center text-stone-500">
                 <span>Время последнего запроса:</span>
                 <span className="font-mono text-stone-800">
@@ -137,21 +152,34 @@ export const DiagnosticsDrawer: React.FC<DiagnosticsDrawerProps> = ({
 
           {/* Connection & Status Metrics */}
           <div className="bg-stone-50 rounded-lg p-3 border border-stone-200 space-y-2">
-            <div className="font-semibold text-stone-800">Статусы потоков аудио</div>
+            <div className="font-semibold text-stone-800">Статусы потоков аудио и буферов</div>
             <div className="grid grid-cols-2 gap-2 text-stone-600">
               <div className="bg-white p-2 rounded border border-stone-200">
-                <span className="text-[10px] text-stone-400 block">Статус STT (Андрей)</span>
-                <span className="font-medium text-stone-900 text-xs">
+                <span className="text-[10px] text-stone-400 block">STT (Андрей)</span>
+                <span className="font-medium text-stone-900 text-xs block">
                   {diagnostics.sttAgentStatus}
+                </span>
+                <span className="text-[10px] text-stone-500">
+                  Дроп: {diagnostics.droppedAudioChunksMic || 0} чанков
                 </span>
               </div>
 
               <div className="bg-white p-2 rounded border border-stone-200">
-                <span className="text-[10px] text-stone-400 block">Статус STT (Клиент)</span>
-                <span className="font-medium text-stone-900 text-xs">
+                <span className="text-[10px] text-stone-400 block">STT (Клиент)</span>
+                <span className="font-medium text-stone-900 text-xs block">
                   {diagnostics.sttClientStatus}
                 </span>
+                <span className="text-[10px] text-stone-500">
+                  Дроп: {diagnostics.droppedAudioChunksCall || 0} чанков
+                </span>
               </div>
+            </div>
+
+            <div className="bg-white p-2 rounded border border-stone-200 text-[11px] text-stone-600 flex justify-between">
+              <span>Реконнекты STT:</span>
+              <span className="font-mono font-medium text-stone-800">
+                микрофон: {diagnostics.micReconnectCount || 0} / звонок: {diagnostics.clientReconnectCount || 0}
+              </span>
             </div>
 
             {diagnostics.reconnectCount > 0 && (

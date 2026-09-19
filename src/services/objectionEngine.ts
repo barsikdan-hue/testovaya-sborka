@@ -13,6 +13,7 @@ export interface FastObjectionResult {
 /**
  * Check whether a client turn is a substantive, meaningful utterance
  * (not a tiny filler / confirmation word like "угу", "да", "понял").
+ * Preserves short business-critical turns: goal, budget, timeline, location, family, payment, objections.
  */
 export function isSubstantiveClientTurn(text: string): boolean {
   if (!text) return false;
@@ -23,7 +24,8 @@ export function isSubstantiveClientTurn(text: string): boolean {
 
   if (!clean) return false;
 
-  const fillers = new Set([
+  // Pure filler words with zero business content
+  const pureFillers = new Set([
     'угу',
     'ага',
     'да',
@@ -51,28 +53,129 @@ export function isSubstantiveClientTurn(text: string): boolean {
     'да алло',
     'добрый день',
     'здравствуйте',
+    'привет',
   ]);
 
-  if (fillers.has(clean)) {
+  if (pureFillers.has(clean)) {
     return false;
+  }
+
+  // Any message containing numbers/digits is substantive (e.g. "30 млн", "до 20", "2 комнатная")
+  if (/\d+/.test(clean)) {
+    return true;
+  }
+
+  // High-value business keywords that make short turns substantive
+  const businessKeywords = [
+    // Goal / purpose
+    'для себя',
+    'для отдыха',
+    'отдых',
+    'инвест',
+    'сдач',
+    'жить',
+    'пмж',
+    'переезд',
+    'дача',
+    // Budget & Payment
+    'миллион',
+    'млн',
+    'тысяч',
+    'бюджет',
+    'ипотек',
+    'наличн',
+    'нал',
+    'рассрочк',
+    'пв',
+    'взнос',
+    // Timeline
+    'конец года',
+    'к осени',
+    'осень',
+    'весна',
+    'весной',
+    'летом',
+    'зимой',
+    'месяц',
+    'не к спеху',
+    'не горит',
+    'срочно',
+    // Location
+    'сочи',
+    'сириус',
+    'адлер',
+    'центр',
+    'море',
+    'моря',
+    'полян',
+    'хост',
+    'дагомыс',
+    'анап',
+    // Family / Decision Makers
+    'муж',
+    'жен',
+    'дет',
+    'ребенок',
+    'ребёнок',
+    'семь',
+    'один',
+    'одна',
+    'родител',
+    'партнер',
+    'партнёр',
+    'сам решаю',
+    'сама решаю',
+    // Objections
+    'дорог',
+    'подума',
+    'далек',
+    'сомнев',
+    'риск',
+    'окупаем',
+    'доходност',
+    // Next Step / Channel
+    'зум',
+    'ватсап',
+    'whatsapp',
+    'телеграм',
+    'telegram',
+    'почт',
+    'номер',
+    'завтра',
+    'вечером',
+    'перезвон',
+    'скиньте',
+    'пришлите',
+    // Criteria
+    'балкон',
+    'ремонт',
+    'отделк',
+    'террас',
+    'бассейн',
+    'паркинг',
+    'видом',
+    'квартир',
+    'апартамент',
+    'дом',
+    'коттедж',
+    'студи',
+  ];
+
+  if (businessKeywords.some((kw) => clean.includes(kw))) {
+    return true;
   }
 
   const words = clean.split(/\s+/).filter(Boolean);
 
-  // If 1 word only and not a key trigger word
-  if (words.length === 1) {
-    const significantSingleWords = ['дорого', 'подумаю', 'далеко', 'сочи', 'анапа', 'сириус', 'ипотека'];
-    if (!significantSingleWords.some((w) => clean.includes(w))) {
-      return false;
-    }
+  // Single word not matched by business keywords
+  if (words.length <= 1) {
+    return false;
   }
 
-  // If 2 words and both are filler-like
-  if (words.length === 2) {
-    const fillerWords = ['ну', 'да', 'ага', 'угу', 'так', 'вот', 'понятно', 'хорошо', 'ясно', 'ладно'];
-    if (words.every((w) => fillerWords.includes(w))) {
-      return false;
-    }
+  // Multi-word phrase composed only of common conversational fillers
+  const conversationalFillers = new Set(['ну', 'да', 'ага', 'угу', 'так', 'вот', 'понятно', 'хорошо', 'ясно', 'ладно', 'мм', 'э', 'не', 'а']);
+  if (words.every((w) => conversationalFillers.has(w))) {
+    return false;
   }
 
   return true;
@@ -364,18 +467,67 @@ export function detectLocalObjection(
     };
   }
 
-  // 15. Прямой запрос материалов (ANSWER)
+  // 15. Прямой запрос официальных документов и поэтажных планов (ANSWER)
   if (
-    lower.includes('планировк') ||
+    lower.includes('проект договора') ||
     lower.includes('поэтажный план') ||
     lower.includes('договор')
   ) {
     return {
-      id: 'answer_materials',
+      id: 'answer_specific_doc',
       category: 'action_answer',
+      ruleId: 'specific_object_material',
       actionType: 'ANSWER',
-      text: 'Да, конечно. Куда вам удобнее получить планировки и расчёт — в WhatsApp или Telegram?',
-      shortReason: 'ANSWER: Конкретный ответ на прямой запрос материалов без отката к опросу.',
+      text: 'Да, запрошу точный план и документы и отправлю вам в течение часа. Куда удобнее принять — в WhatsApp или Telegram?',
+      shortReason: 'ANSWER: Конкретный ответ на запрос официальных документов без затягивания.',
+      confidenceStatus: 'confirmed',
+    };
+  }
+
+  // 15b. Запрос фото / вариантов / подборки (PROPOSE_NEXT_STEP через видеопоказ)
+  if (
+    lower.includes('планировк') ||
+    lower.includes('пришлите фото') ||
+    lower.includes('скиньте фото') ||
+    lower.includes('отправьте фото') ||
+    lower.includes('скиньте варианты') ||
+    lower.includes('пришлите варианты') ||
+    lower.includes('скиньте мне варианты') ||
+    lower.includes('пришлите подборку') ||
+    lower.includes('скиньте в вотсап') ||
+    lower.includes('скиньте в ватсап') ||
+    lower.includes('whatsapp') ||
+    lower.includes('ватсап') ||
+    lower.includes('вотсап') ||
+    lower.includes('телеграм')
+  ) {
+    return {
+      id: 'propose_video_variants',
+      category: 'action_variants_video',
+      ruleId: 'propose_video_meeting',
+      actionType: 'PROPOSE_NEXT_STEP',
+      text: 'Фото и планировки обязательно отправлю. Чтобы по ним не гадать, лучше за 15 минут покажу варианты и локацию по видео. Когда вам удобно?',
+      shortReason: 'Признание запроса материалов с мягким предложением 15-минутного видеопоказа вместо каталожных продаж.',
+      confidenceStatus: 'confirmed',
+    };
+  }
+
+  // 16. Отказ от видеосвязи / зума
+  if (
+    lower.includes('не хочу видео') ||
+    lower.includes('не надо видео') ||
+    lower.includes('без видео') ||
+    lower.includes('не хочу зум') ||
+    lower.includes('не надо зум') ||
+    lower.includes('без зума') ||
+    lower.includes('не люблю видео')
+  ) {
+    return {
+      id: 'objection_refuse_video',
+      category: 'objection_channel',
+      actionType: 'CLARIFY',
+      text: 'Понял вас, видеосвязь не обязательна. Можем продолжить по телефону или в мессенджере. Как вам комфортнее изучать варианты?',
+      shortReason: 'Снятие барьера формата видео: уважение комфорта клиента без навязывания.',
       confidenceStatus: 'confirmed',
     };
   }

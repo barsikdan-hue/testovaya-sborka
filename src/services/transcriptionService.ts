@@ -17,6 +17,12 @@ export class LiveTranscriptionChannel {
   private isIntentionalClose = false;
   private reconnectAttempts = 0;
   private maxReconnects = 3;
+  private reconnectTimer: any = null;
+  public droppedAudioChunksCount: number = 0;
+
+  public get reconnectCount(): number {
+    return this.reconnectAttempts;
+  }
 
   public static getTotalLiveSessionsCount(): number {
     return LiveTranscriptionChannel.totalLiveSessionsCreated;
@@ -89,7 +95,7 @@ export class LiveTranscriptionChannel {
           if (this.reconnectAttempts < this.maxReconnects) {
             this.reconnectAttempts++;
             this.callbacks.onStatusChange?.(this.role, 'connecting');
-            setTimeout(() => this.connect(), 1000 * this.reconnectAttempts);
+            this.reconnectTimer = setTimeout(() => this.connect(), 1000 * this.reconnectAttempts);
           } else {
             this.callbacks.onStatusChange?.(this.role, 'closed');
           }
@@ -111,12 +117,26 @@ export class LiveTranscriptionChannel {
 
   public sendAudioChunk(pcmChunk: ArrayBuffer) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      // Backpressure protection: drop audio chunks if socket buffer exceeds 64KB
+      if (this.ws.bufferedAmount > 64 * 1024) {
+        this.droppedAudioChunksCount++;
+        if (this.droppedAudioChunksCount % 25 === 1) {
+          console.warn(
+            `[STT ${this.role}] High WebSocket bufferedAmount (${this.ws.bufferedAmount} bytes). Dropping chunk.`
+          );
+        }
+        return;
+      }
       this.ws.send(pcmChunk);
     }
   }
 
   public disconnect() {
     this.isIntentionalClose = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       try {
         this.ws.close(1000, 'Normal closure');

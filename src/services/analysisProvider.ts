@@ -3,6 +3,7 @@ import {
   ConversationState,
   TranscriptTurn,
 } from '../types';
+import { isSubstantiveClientTurn } from './objectionEngine';
 
 export interface AnalysisPayload {
   sessionId: string;
@@ -20,7 +21,8 @@ export class AnalysisProvider {
   private pendingPayload: AnalysisPayload | null = null;
   private debounceTimer: any = null;
   private activeAbortController: AbortController | null = null;
-  private requestTimeoutTimer: any = null;
+  private softThresholdTimer: any = null;
+  private hardTimeoutTimer: any = null;
 
   // Quota optimization state & protections
   private analyzedTurnIds: Set<string> = new Set();
@@ -31,6 +33,8 @@ export class AnalysisProvider {
   // Diagnostics counters
   private totalAnalysisRequestsCount: number = 0;
   private cancelledRequestsCount: number = 0;
+  private rejectedRequestsCount: number = 0;
+  private lastRejectedReason: string | null = null;
   private lastRequestTimestamp: number | null = null;
   private lastRequestReason: string | null = null;
 
@@ -51,6 +55,8 @@ export class AnalysisProvider {
     return {
       requestsCount: this.totalAnalysisRequestsCount,
       cancelledCount: this.cancelledRequestsCount,
+      rejectedCount: this.rejectedRequestsCount,
+      lastRejectedReason: this.lastRejectedReason,
       lastRequestTime: this.lastRequestTimestamp,
       lastRequestReason: this.lastRequestReason,
     };
@@ -61,42 +67,35 @@ export class AnalysisProvider {
   }
 
   /**
-   * Requirements 4, 5, 6, 7, 12, 17, 18, 19, 20:
    * Verify all conditions before allowing an analysis request:
-   * - speaker === 'client'
+   * - speaker === 'client' (Agent speech NEVER eligible)
    * - isFinal === true
-   * - text.length >= 12
+   * - substantive client turn (isSubstantiveClientTurn)
    * - turnId not yet analyzed
    * - revision not yet analyzed
-   * - at least 3 seconds passed since last analysis
    */
   public checkEligibility(
     turn: TranscriptTurn,
     revision: number
   ): { eligible: boolean; reason: string; canReuseLast: boolean } {
+    let rejectionReason: string | null = null;
+
     if (turn.speaker !== 'client') {
-      return { eligible: false, reason: 'Реплика Андрея (анализ отключен)', canReuseLast: true };
-    }
-    if (!turn.isFinal) {
-      return { eligible: false, reason: 'Промежуточная транскрипция', canReuseLast: true };
-    }
-    if (turn.text.trim().length < 12) {
-      return { eligible: false, reason: 'Короткая реплика (< 12 символов)', canReuseLast: true };
-    }
-    if (this.analyzedTurnIds.has(turn.id)) {
-      return { eligible: false, reason: 'Реплика уже проанализирована', canReuseLast: true };
-    }
-    if (this.analyzedRevisions.has(revision)) {
-      return { eligible: false, reason: 'Ревизия уже обработана', canReuseLast: true };
+      rejectionReason = 'Реплика Андрея (анализ отключен)';
+    } else if (!turn.isFinal) {
+      rejectionReason = 'Промежуточная транскрипция';
+    } else if (!isSubstantiveClientTurn(turn.text)) {
+      rejectionReason = 'Бессодержательная реплика / междометие';
+    } else if (this.analyzedTurnIds.has(turn.id)) {
+      rejectionReason = 'Реплика уже проанализирована';
+    } else if (this.analyzedRevisions.has(revision)) {
+      rejectionReason = 'Ревизия уже обработана';
     }
 
-    const elapsed = Date.now() - this.lastAnalysisTimestamp;
-    if (elapsed < 3000) {
-      return {
-        eligible: false,
-        reason: `Интервал < 3 сек (${Math.round(elapsed / 100) / 10}с), повторное использование`,
-        canReuseLast: true,
-      };
+    if (rejectionReason) {
+      this.rejectedRequestsCount++;
+      this.lastRejectedReason = rejectionReason;
+      return { eligible: false, reason: rejectionReason, canReuseLast: true };
     }
 
     return {
@@ -107,16 +106,16 @@ export class AnalysisProvider {
   }
 
   /**
-   * Schedule analysis with 300 ms debounce only after final client turn (Requirement 11).
-   * Aborts previous running request if a new substantive client turn arrives (Requirement 8).
-   * Never queues requests (Requirement 9).
+   * Schedule analysis with debounce after final substantive client turn.
+   * Aborts previous running request ONLY if a new substantive client turn arrives.
+   * Never queues requests.
    */
   public scheduleAnalysis(
     payload: AnalysisPayload,
     onSuccess: (result: AnalysisResponse) => void,
     onError: (err: any) => void,
     onRefiningChange?: (isRefining: boolean) => void,
-    debounceMs: number = 300
+    debounceMs: number = 250
   ) {
     // Session isolation check
     if (this.currentSessionId && payload.sessionId !== this.currentSessionId) {
@@ -126,7 +125,7 @@ export class AnalysisProvider {
       this.currentSessionId = payload.sessionId;
     }
 
-    // Requirement 8: If an old analysis request is in-flight, abort it immediately via AbortController
+    // Abort previous in-flight request only because a new client turn has superseded it
     if (this.activeAbortController && this.inFlightRevision !== null) {
       try {
         this.activeAbortController.abort();
@@ -138,14 +137,12 @@ export class AnalysisProvider {
       this.inFlightRevision = null;
     }
 
-    // Requirement 9: Do NOT queue requests; replace pending payload
     this.pendingPayload = payload;
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
 
-    // Requirement 11: Debounce 300 ms after final client turn
     this.debounceTimer = setTimeout(() => {
       this.executeAnalysis(onSuccess, onError, onRefiningChange);
     }, debounceMs);
@@ -163,7 +160,6 @@ export class AnalysisProvider {
 
     const targetTurn = payload.newTurns?.[0];
     if (targetTurn) {
-      // Final eligibility verification before network call (Requirement 19 & 20)
       const check = this.checkEligibility(targetTurn, payload.revision);
       if (!check.eligible) {
         console.log(`[AnalysisProvider] Пропуск запроса: ${check.reason}`);
@@ -176,16 +172,11 @@ export class AnalysisProvider {
 
     this.inFlightRevision = payload.revision;
 
-    // Track analyzed turn and revision to prevent duplicate requests (Requirement 17 & 18)
-    if (targetTurn?.id) {
-      this.analyzedTurnIds.add(targetTurn.id);
-    }
-    this.analyzedRevisions.add(payload.revision);
-
     // Update timestamps and reason
     this.lastAnalysisTimestamp = Date.now();
     this.lastRequestTimestamp = this.lastAnalysisTimestamp;
-    this.lastRequestReason = payload.reason || (targetTurn ? `Клиент: "${targetTurn.text.slice(0, 35)}..."` : 'Анализ контекста');
+    this.lastRequestReason =
+      payload.reason || (targetTurn ? `Клиент: "${targetTurn.text.slice(0, 35)}..."` : 'Анализ контекста');
     this.totalAnalysisRequestsCount++;
 
     // Create abort controller for this specific request
@@ -194,12 +185,15 @@ export class AnalysisProvider {
     const reqSessionId = payload.sessionId;
     const reqRevision = payload.revision;
 
-    onRefiningChange?.(true);
+    // Soft threshold: after 1200ms show "Уточняю контекст..." without aborting
+    this.softThresholdTimer = setTimeout(() => {
+      onRefiningChange?.(true);
+    }, 1200);
 
-    // Timeout: 1200ms
-    let isTimedOut = false;
-    this.requestTimeoutTimer = setTimeout(() => {
-      isTimedOut = true;
+    // Hard network timeout: 4500ms safety limit
+    let isHardTimedOut = false;
+    this.hardTimeoutTimer = setTimeout(() => {
+      isHardTimedOut = true;
       if (this.activeAbortController) {
         try {
           this.activeAbortController.abort();
@@ -208,7 +202,7 @@ export class AnalysisProvider {
           // ignore
         }
       }
-    }, 1200);
+    }, 4500);
 
     try {
       const response = await fetch('/api/analyze', {
@@ -236,6 +230,12 @@ export class AnalysisProvider {
         return;
       }
 
+      // MARK AS ANALYZED ONLY ON SUCCESSFUL RESPONSE (HTTP 2xx)
+      if (targetTurn?.id) {
+        this.analyzedTurnIds.add(targetTurn.id);
+      }
+      this.analyzedRevisions.add(payload.revision);
+
       this.latestAcknowledgedRevision = data.basedOnRevision;
       this.lastValidResponse = data;
       onRefiningChange?.(false);
@@ -243,18 +243,24 @@ export class AnalysisProvider {
     } catch (err: any) {
       onRefiningChange?.(false);
       if (err.name === 'AbortError') {
-        if (isTimedOut) {
-          console.warn(`[AnalysisProvider] Analysis timed out at 1200ms for rev ${reqRevision}. Preserving current suggestion.`);
-          onError({ isTimeout: true, message: 'Уточняю контекст' });
+        if (isHardTimedOut) {
+          console.warn(
+            `[AnalysisProvider] Analysis hard timed out at 4500ms for rev ${reqRevision}. Preserving current suggestion.`
+          );
+          onError({ isTimeout: true, message: 'Время ответа Gemini превышено, карточка сохранена' });
         }
         return;
       }
       console.error('Analysis execution failed:', err);
       onError(err);
     } finally {
-      if (this.requestTimeoutTimer) {
-        clearTimeout(this.requestTimeoutTimer);
-        this.requestTimeoutTimer = null;
+      if (this.softThresholdTimer) {
+        clearTimeout(this.softThresholdTimer);
+        this.softThresholdTimer = null;
+      }
+      if (this.hardTimeoutTimer) {
+        clearTimeout(this.hardTimeoutTimer);
+        this.hardTimeoutTimer = null;
       }
       this.inFlightRevision = null;
       this.activeAbortController = null;
@@ -266,9 +272,13 @@ export class AnalysisProvider {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    if (this.requestTimeoutTimer) {
-      clearTimeout(this.requestTimeoutTimer);
-      this.requestTimeoutTimer = null;
+    if (this.softThresholdTimer) {
+      clearTimeout(this.softThresholdTimer);
+      this.softThresholdTimer = null;
+    }
+    if (this.hardTimeoutTimer) {
+      clearTimeout(this.hardTimeoutTimer);
+      this.hardTimeoutTimer = null;
     }
     if (this.activeAbortController) {
       try {
