@@ -11,6 +11,7 @@ import {
   TrustEvaluation,
 } from '../types';
 import { isSubstantiveClientTurn } from './objectionEngine';
+import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepeat';
 
 export const CORE_12_CRITERIA_IDS = [
   'trust',

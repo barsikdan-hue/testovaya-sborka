@@ -42,6 +42,8 @@ export type ActionType =
 
 export type SuggestionFeedback = 'useful' | 'irrelevant' | 'already_discussed';
 
+export type HintLifecycleStatus = 'candidate' | 'shown' | 'expired' | 'superseded' | 'used';
+
 export interface NextStepAgreement {
   action: string;
   assignee?: string;
@@ -266,6 +268,14 @@ export interface ConversationState {
   dealStage?: DealStage;
   conversationTask?: ConversationTask;
   revision: number;
+  stateVersion?: number;
+  signals?: Array<{
+    type: string;
+    text: string;
+    evidenceQuote: string;
+    turnId: string;
+  }>;
+  sessionTurnsBacklog?: TranscriptTurn[];
   goal: FactEntry;
   primaryGoal?: FactEntry;
   secondaryUse?: FactEntry;
@@ -371,6 +381,10 @@ export interface SuggestedReply {
   semanticKey?: string | null;
   used?: boolean;
   usedAt?: number;
+  lifecycleStatus?: HintLifecycleStatus;
+  ttlMs?: number;
+  semanticTarget?: string;
+  isNoHint?: boolean;
 }
 
 export interface AnalysisResponse {
@@ -390,6 +404,56 @@ export interface AnalysisResponse {
   scriptProgress?: FirstCallScriptProgress;
   qualityResult?: QualityControlResult;
   recognizedMeaning?: string | null;
+  // New AI JSON contract fields (Stage 4)
+  fact_updates?: Array<{
+    category?: string;
+    field: string;
+    status?: MetricStatus;
+    value: string;
+    evidenceQuote: string;
+    evidenceTurnId: string;
+    semanticReason?: string;
+    confidence?: number;
+    needsClarification?: boolean;
+    isFlexible?: boolean;
+    comment?: string;
+  }>;
+  signals?: Array<{
+    type: string;
+    text: string;
+    evidenceQuote: string;
+    turnId: string;
+  }>;
+  hypotheses?: Array<{
+    category: string;
+    text: string;
+    reason: string;
+    evidenceQuote?: string;
+  }>;
+  indicator_updates?: Record<
+    string,
+    {
+      status: MetricStatus;
+      value?: string | null;
+      evidenceQuote?: string | null;
+      evidenceTurnId?: string | null;
+      semanticReason?: string | null;
+    }
+  >;
+  hint?: {
+    text: string;
+    shortReason: string;
+    closesMetric: string;
+    closesMetricLabel: string;
+    semanticTarget: string;
+    actionType: ActionType;
+    candidateRuleId?: string | null;
+    expectedClientMeaning?: string | null;
+    evidenceQuote?: string | null;
+  } | null;
+  next_step_update?: NextStepAgreement | null;
+
+  // Legacy / backward-compat fields
   factsDelta: Array<{
     category?: string;
     field: string;

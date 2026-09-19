@@ -156,67 +156,170 @@ export function extractSemanticKey(replyOrText: Partial<SuggestedReply> | string
  * Checks if candidate reply repeats an already known fact or asked question.
  */
 export function checkSemanticAntiRepeat(
-  reply: SuggestedReply,
+  reply: Partial<SuggestedReply> | string,
   state: ConversationState,
   recentTurns: TranscriptTurn[] = []
 ): AntiRepeatCheckResult {
-  const key = reply.semanticKey || extractSemanticKey(reply);
+  const replyObj = typeof reply === 'string' ? { text: reply } : reply;
+  const key = replyObj.semanticKey || extractSemanticKey(replyObj);
+  const text = replyObj.text || '';
+  const metrics = state.scriptProgress?.metrics;
 
   // 1. Check against ALREADY CONFIRMED facts in state
-  if (key === 'ask_goal' && state.goal?.value && !state.goal.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Цель покупки уже подтверждена: "${state.goal.value}". Повторный вопрос запрещён.`,
-    };
+  if (key === 'ask_goal') {
+    if (state.goal?.value && !state.goal.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Цель покупки уже подтверждена: "${state.goal.value}". Повторный вопрос запрещён.`,
+      };
+    }
+    if (metrics?.['goal']?.status === 'confirmed' || metrics?.['goal']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Цель покупки уже раскрыта (${metrics?.['goal']?.value || 'ранее в диалоге'}).`,
+      };
+    }
   }
 
-  if (key === 'clarify_for_myself' && state.primaryGoal?.value) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Формат «для себя» уже раскрыт: "${state.primaryGoal.value}".`,
-    };
+  if (key === 'clarify_for_myself' && (state.primaryGoal?.value || state.goal?.value)) {
+    if (state.goal?.value && !state.goal.value.toLowerCase().includes('для себя')) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Формат «для себя» уже раскрыт: "${state.goal.value}".`,
+      };
+    }
   }
 
-  if (key === 'ask_location' && state.location?.value && !state.location.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Локация уже подтверждена: "${state.location.value}".`,
-    };
+  if (key === 'ask_location') {
+    if (state.location?.value && !state.location.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Локация уже подтверждена: "${state.location.value}".`,
+      };
+    }
+    if (metrics?.['location']?.status === 'confirmed' || metrics?.['location']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Локация уже раскрыта или вопрос задан (${metrics?.['location']?.value || 'в диалоге'}).`,
+      };
+    }
   }
 
-  if (key === 'ask_budget' && state.budget?.value && !state.budget.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Бюджет уже подтвержден: "${state.budget.value}".`,
-    };
+  if (key === 'ask_budget') {
+    if (state.budget?.value && !state.budget.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Бюджет уже подтвержден: "${state.budget.value}".`,
+      };
+    }
+    if (metrics?.['budget']?.status === 'confirmed' || metrics?.['budget']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Бюджет уже раскрыт или вопрос задан (${metrics?.['budget']?.value || 'в диалоге'}).`,
+      };
+    }
   }
 
-  if (key === 'ask_payment_method' && state.paymentMethod?.value && !state.paymentMethod.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Способ покупки уже подтвержден: "${state.paymentMethod.value}".`,
-    };
+  if (key === 'ask_payment_method') {
+    if (state.paymentMethod?.value && !state.paymentMethod.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Способ покупки уже подтвержден: "${state.paymentMethod.value}".`,
+      };
+    }
+    if (metrics?.['paymentMethod']?.status === 'confirmed' || metrics?.['paymentMethod']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Способ покупки уже подтвержден (${metrics?.['paymentMethod']?.value || 'в диалоге'}).`,
+      };
+    }
   }
 
-  if (key === 'ask_decision_makers' && state.decisionMakers?.value && !state.decisionMakers.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `ЛПР уже подтвержден: "${state.decisionMakers.value}".`,
-    };
+  if (key === 'ask_down_payment') {
+    if (state.downPayment?.value && !state.downPayment.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Первоначальный взнос уже подтверждён: "${state.downPayment.value}".`,
+      };
+    }
+    if (metrics?.['downPayment']?.status === 'confirmed' || metrics?.['downPayment']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Первоначальный взнос уже раскрыт (${metrics?.['downPayment']?.value || 'в диалоге'}).`,
+      };
+    }
   }
 
-  if (key === 'ask_property_type' && state.propertyType?.value && !state.propertyType.needsClarification) {
-    return {
-      accepted: false,
-      semanticKey: key,
-      rejectionReason: `Тип недвижимости уже подтвержден: "${state.propertyType.value}".`,
-    };
+  if (key === 'ask_down_payment_source') {
+    if (metrics?.['downPaymentSource']?.status === 'confirmed' || metrics?.['downPaymentSource']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Источник первоначального взноса уже зафиксирован: "${metrics?.['downPaymentSource']?.value}".`,
+      };
+    }
+  }
+
+  if (key === 'ask_family_mortgage') {
+    if (metrics?.['familyMortgage']?.status === 'not_applicable') {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Семейная ипотека не применима (дети взрослые или отсутствуют). Повторный вопрос запрещен!`,
+      };
+    }
+    if (metrics?.['familyMortgage']?.status === 'confirmed' || metrics?.['familyMortgage']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Статус семейной ипотеки уже подтвержден.`,
+      };
+    }
+  }
+
+  if (key === 'ask_decision_makers') {
+    if (state.decisionMakers?.value && !state.decisionMakers.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `ЛПР уже подтвержден: "${state.decisionMakers.value}".`,
+      };
+    }
+    if (metrics?.['decisionMaker']?.status === 'confirmed' || metrics?.['decisionMaker']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `ЛПР уже подтвержден (${metrics?.['decisionMaker']?.value || 'ранее в диалоге'}).`,
+      };
+    }
+  }
+
+  if (key === 'ask_property_type') {
+    if (state.propertyType?.value && !state.propertyType.needsClarification) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Тип недвижимости уже подтвержден: "${state.propertyType.value}".`,
+      };
+    }
+    if (metrics?.['propertyType']?.status === 'confirmed' || metrics?.['propertyType']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Тип недвижимости уже подтвержден (${metrics?.['propertyType']?.value || 'в диалоге'}).`,
+      };
+    }
   }
 
   if (key === 'ask_timeline' && (state.purchaseTimeline?.value || state.timeline?.value)) {
@@ -224,6 +327,14 @@ export function checkSemanticAntiRepeat(
       accepted: false,
       semanticKey: key,
       rejectionReason: `Сроки уже известны: "${state.purchaseTimeline?.value || state.timeline?.value}".`,
+    };
+  }
+
+  if (key === 'propose_video_presentation' && metrics?.['ppv']?.status === 'confirmed') {
+    return {
+      accepted: false,
+      semanticKey: key,
+      rejectionReason: `Видеопрезентация уже согласована. Следующий шаг — фиксация времени и отправка ссылки.`,
     };
   }
 
@@ -237,7 +348,7 @@ export function checkSemanticAntiRepeat(
       };
     }
 
-    const normText = normalizeRussianText(reply.text);
+    const normText = normalizeRussianText(text);
     for (const asked of state.askedQuestions) {
       const normAsked = normalizeRussianText(asked);
       if (normAsked.length > 10 && normText.includes(normAsked.slice(0, 20))) {

@@ -16,6 +16,7 @@ export interface AnalysisPayload {
 
 export class AnalysisProvider {
   private currentSessionId: string | null = null;
+  private isInFlight: boolean = false;
   private inFlightRevision: number | null = null;
   private latestAcknowledgedRevision: number = 0;
   private pendingPayload: AnalysisPayload | null = null;
@@ -23,6 +24,15 @@ export class AnalysisProvider {
   private activeAbortController: AbortController | null = null;
   private softThresholdTimer: any = null;
   private hardTimeoutTimer: any = null;
+
+  // Stage 2: 1 in-flight, 1 pending batch & memory_only backlog
+  private pendingBatchTurns: TranscriptTurn[] = [];
+  private pendingLatestState: ConversationState | null = null;
+  private pendingRevision: number = 0;
+  private pendingSuccessCb: ((result: AnalysisResponse) => void) | null = null;
+  private pendingErrorCb: ((err: any) => void) | null = null;
+  private pendingRefiningCb: ((isRefining: boolean) => void) | null = null;
+  private memoryBacklog: TranscriptTurn[] = [];
 
   // Quota optimization state & protections
   private analyzedTurnIds: Set<string> = new Set();
@@ -41,14 +51,38 @@ export class AnalysisProvider {
   public setSession(sessionId: string) {
     this.cancelPending();
     this.currentSessionId = sessionId;
+    this.isInFlight = false;
     this.inFlightRevision = null;
     this.latestAcknowledgedRevision = 0;
+    this.pendingBatchTurns = [];
+    this.pendingLatestState = null;
+    this.pendingRevision = 0;
+    this.pendingSuccessCb = null;
+    this.pendingErrorCb = null;
+    this.pendingRefiningCb = null;
+    this.memoryBacklog = [];
     this.analyzedTurnIds.clear();
     this.analyzedRevisions.clear();
     this.lastAnalysisTimestamp = 0;
     this.lastValidResponse = null;
     this.lastRequestTimestamp = null;
     this.lastRequestReason = null;
+  }
+
+  public getMemoryBacklog(): TranscriptTurn[] {
+    return [...this.memoryBacklog];
+  }
+
+  public getPendingBatch(): TranscriptTurn[] {
+    return [...this.pendingBatchTurns];
+  }
+
+  public getIsInFlight(): boolean {
+    return this.isInFlight;
+  }
+
+  public getLatestAcknowledgedRevision(): number {
+    return this.latestAcknowledgedRevision;
   }
 
   public getStats() {
@@ -59,6 +93,9 @@ export class AnalysisProvider {
       lastRejectedReason: this.lastRejectedReason,
       lastRequestTime: this.lastRequestTimestamp,
       lastRequestReason: this.lastRequestReason,
+      inFlight: this.isInFlight,
+      pendingBatchSize: this.pendingBatchTurns.length,
+      memoryBacklogSize: this.memoryBacklog.length,
     };
   }
 
@@ -106,9 +143,9 @@ export class AnalysisProvider {
   }
 
   /**
-   * Schedule analysis with debounce after final substantive client turn.
-   * Aborts previous running request ONLY if a new substantive client turn arrives.
-   * Never queues requests.
+   * Schedule analysis with 1 in-flight limit + 1 pending batch queue.
+   * DOES NOT abort previous in-flight request on new client turns!
+   * New turns are accumulated in pendingBatch and processed immediately after in-flight finishes.
    */
   public scheduleAnalysis(
     payload: AnalysisPayload,
@@ -125,18 +162,35 @@ export class AnalysisProvider {
       this.currentSessionId = payload.sessionId;
     }
 
-    // Abort previous in-flight request only because a new client turn has superseded it
-    if (this.activeAbortController && this.inFlightRevision !== null) {
-      try {
-        this.activeAbortController.abort();
-        this.cancelledRequestsCount++;
-      } catch (e) {
-        // ignore
+    // Memory-only backlog: append new turns (deduplicated by ID)
+    if (payload.newTurns && payload.newTurns.length > 0) {
+      for (const t of payload.newTurns) {
+        if (!this.memoryBacklog.some((m) => m.id === t.id)) {
+          this.memoryBacklog.push(t);
+        }
       }
-      this.activeAbortController = null;
-      this.inFlightRevision = null;
     }
 
+    // STAGE 2 SCHEDULER:
+    // If a request is already in-flight, DO NOT ABORT!
+    // Instead, accumulate into pendingBatch and remember latest state/revision.
+    if (this.isInFlight) {
+      if (payload.newTurns && payload.newTurns.length > 0) {
+        for (const t of payload.newTurns) {
+          if (!this.pendingBatchTurns.some((b) => b.id === t.id)) {
+            this.pendingBatchTurns.push(t);
+          }
+        }
+      }
+      this.pendingLatestState = payload.currentState;
+      this.pendingRevision = Math.max(this.pendingRevision, payload.revision);
+      this.pendingSuccessCb = onSuccess;
+      this.pendingErrorCb = onError;
+      this.pendingRefiningCb = onRefiningChange || null;
+      return;
+    }
+
+    // If not in-flight, prepare pending payload and debounce
     this.pendingPayload = payload;
 
     if (this.debounceTimer) {
@@ -170,6 +224,7 @@ export class AnalysisProvider {
       }
     }
 
+    this.isInFlight = true;
     this.inFlightRevision = payload.revision;
 
     // Update timestamps and reason
@@ -179,7 +234,7 @@ export class AnalysisProvider {
       payload.reason || (targetTurn ? `Клиент: "${targetTurn.text.slice(0, 35)}..."` : 'Анализ контекста');
     this.totalAnalysisRequestsCount++;
 
-    // Create abort controller for this specific request
+    // Create abort controller for this specific request (ONLY for hard timeout or cancelPending)
     this.activeAbortController = new AbortController();
     const currentSignal = this.activeAbortController.signal;
     const reqSessionId = payload.sessionId;
@@ -190,7 +245,7 @@ export class AnalysisProvider {
       onRefiningChange?.(true);
     }, 1200);
 
-    // Hard network timeout: 4500ms safety limit
+    // Hard network timeout: 5000ms safety limit
     let isHardTimedOut = false;
     this.hardTimeoutTimer = setTimeout(() => {
       isHardTimedOut = true;
@@ -202,7 +257,7 @@ export class AnalysisProvider {
           // ignore
         }
       }
-    }, 4500);
+    }, 5000);
 
     try {
       const response = await fetch('/api/analyze', {
@@ -219,15 +274,17 @@ export class AnalysisProvider {
 
       const data: AnalysisResponse = await response.json();
 
-      // Discard stale response if session changed or superseded by newer revision
+      // Discard stale response if session changed
       if (data.sessionId !== this.currentSessionId || data.sessionId !== reqSessionId) {
         console.warn(`[AnalysisProvider] Discarded stale response for session ${data.sessionId}`);
         return;
       }
 
+      // State versioning: if superseded by a strictly newer acknowledged revision, log warning
       if (data.basedOnRevision < this.latestAcknowledgedRevision) {
-        console.warn(`[AnalysisProvider] Discarded outdated revision ${data.basedOnRevision}`);
-        return;
+        console.warn(`[AnalysisProvider] Outdated revision ${data.basedOnRevision} < ${this.latestAcknowledgedRevision}`);
+      } else {
+        this.latestAcknowledgedRevision = data.basedOnRevision;
       }
 
       // MARK AS ANALYZED ONLY ON SUCCESSFUL RESPONSE (HTTP 2xx)
@@ -236,7 +293,6 @@ export class AnalysisProvider {
       }
       this.analyzedRevisions.add(payload.revision);
 
-      this.latestAcknowledgedRevision = data.basedOnRevision;
       this.lastValidResponse = data;
       onRefiningChange?.(false);
       onSuccess(data);
@@ -245,7 +301,7 @@ export class AnalysisProvider {
       if (err.name === 'AbortError') {
         if (isHardTimedOut) {
           console.warn(
-            `[AnalysisProvider] Analysis hard timed out at 4500ms for rev ${reqRevision}. Preserving current suggestion.`
+            `[AnalysisProvider] Analysis hard timed out at 5000ms for rev ${reqRevision}. Preserving current suggestion.`
           );
           onError({ isTimeout: true, message: 'Время ответа Gemini превышено, карточка сохранена' });
         }
@@ -262,8 +318,40 @@ export class AnalysisProvider {
         clearTimeout(this.hardTimeoutTimer);
         this.hardTimeoutTimer = null;
       }
+      this.isInFlight = false;
       this.inFlightRevision = null;
       this.activeAbortController = null;
+
+      // STAGE 2 SCHEDULER DRAIN:
+      // If new substantive turns accumulated while this request was in-flight,
+      // dispatch the pending batch immediately!
+      if (this.pendingBatchTurns.length > 0 && this.pendingLatestState && this.currentSessionId === reqSessionId) {
+        const nextTurns = [...this.pendingBatchTurns];
+        const nextState = this.pendingLatestState;
+        const nextRev = this.pendingRevision;
+        const nextSuccess = this.pendingSuccessCb || onSuccess;
+        const nextError = this.pendingErrorCb || onError;
+        const nextRefining = this.pendingRefiningCb || onRefiningChange;
+
+        this.pendingBatchTurns = [];
+        this.pendingLatestState = null;
+        this.pendingRevision = 0;
+        this.pendingSuccessCb = null;
+        this.pendingErrorCb = null;
+        this.pendingRefiningCb = null;
+
+        this.pendingPayload = {
+          sessionId: reqSessionId,
+          revision: nextRev,
+          recentTurns: [...this.memoryBacklog.slice(-10)],
+          newTurns: nextTurns,
+          currentState: nextState,
+          reason: `Накопленный batch (${nextTurns.length} реплик)`,
+        };
+
+        // Fire next analysis batch immediately
+        this.executeAnalysis(nextSuccess, nextError, nextRefining);
+      }
     }
   }
 
