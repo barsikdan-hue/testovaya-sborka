@@ -122,7 +122,23 @@ export function mergeFactsDelta(
     reason: string;
   }>,
   scriptProgress?: any,
-  qualityResult?: any
+  qualityResult?: any,
+  indicatorUpdates?: Record<
+    string,
+    {
+      status: any;
+      value?: string | null;
+      evidenceQuote?: string | null;
+      evidenceTurnId?: string | null;
+      semanticReason?: string | null;
+    }
+  >,
+  signals?: Array<{
+    type: string;
+    text: string;
+    evidenceQuote: string;
+    turnId: string;
+  }>
 ): ConversationState {
   const next: ConversationState = JSON.parse(JSON.stringify(current));
 
@@ -134,6 +150,32 @@ export function mergeFactsDelta(
   }
   if (qualityResult) {
     next.qualityResult = qualityResult;
+  }
+
+  // Support signals collection
+  if (signals && Array.isArray(signals)) {
+    if (!next.signals) {
+      next.signals = [];
+    }
+    for (const sig of signals) {
+      if (sig && sig.text && !next.signals.some((s) => s.text === sig.text && s.turnId === sig.turnId)) {
+        next.signals.push(sig);
+      }
+    }
+  }
+
+  // Support indicator updates directly onto scriptProgress metrics
+  if (indicatorUpdates && typeof indicatorUpdates === 'object' && next.scriptProgress?.metrics) {
+    for (const [metricId, update] of Object.entries(indicatorUpdates)) {
+      if (next.scriptProgress.metrics[metricId]) {
+        const m = next.scriptProgress.metrics[metricId];
+        if (update.status) m.status = update.status;
+        if (update.value) m.value = update.value;
+        if (update.evidenceQuote) m.evidenceQuote = update.evidenceQuote;
+        if (update.evidenceTurnId) m.evidenceTurnId = update.evidenceTurnId;
+        if (update.semanticReason) m.semanticReason = update.semanticReason;
+      }
+    }
   }
 
   if (!next.confirmedFacts) {

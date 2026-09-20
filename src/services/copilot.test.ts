@@ -9,7 +9,7 @@ import { extractDeterministicFacts } from './deterministicFacts';
 import { selectCandidateRules } from './candidateRules';
 import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepeat';
 import { hasWholeWord, hasAnyWholeWord, validateEvidenceQuote } from './textUtils';
-import { detectRealEstatePainCategory, buildHpbPresentation } from './spinEngine';
+import { detectRealEstatePainCategory, buildHpbPresentation, evaluateSpinAndHpb } from './spinEngine';
 import { classifyClientTurnIntent } from './objectionEngine';
 import { SuggestedReply } from '../types';
 
@@ -390,8 +390,8 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
     expect(chunksSent).toBe(2); // Resumed cleanly
   });
 
-  // Scenario 18: In-flight abort on new client turn superseding (Requirement 14)
-  it('Scenario 18: aborts running fetch when superseded by a new client turn', async () => {
+  // Scenario 18: Stage 2 Scheduler batches turns without aborting in-flight and isolates sessions
+  it('Scenario 18: queues turns into pendingBatch while in-flight and aborts on session cancel', async () => {
     const provider = new AnalysisProvider();
     provider.setSession('sess_abort');
 
@@ -403,8 +403,9 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
       signal: {} as any,
     };
 
-    // Inject active controller
+    // Simulate in-flight state
     (provider as any).activeAbortController = fakeAbortController;
+    (provider as any).isInFlight = true;
     (provider as any).inFlightRevision = 2;
 
     const newTurn: TranscriptTurn = {
@@ -431,6 +432,13 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
       100
     );
 
+    // In Stage 2 scheduler, in-flight is NOT aborted; turn is batched into pendingBatch
+    expect(abortCalled).toBe(false);
+    expect(provider.getPendingBatch().length).toBe(1);
+    expect(provider.getPendingBatch()[0].id).toBe('turn_new_supersede');
+
+    // cancelPending cancels active controller
+    provider.cancelPending();
     expect(abortCalled).toBe(true);
     expect(provider.getStats().cancelledCount).toBe(1);
   });
@@ -640,6 +648,99 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
     // Hallucinated quote not in the turn
     expect(validateEvidenceQuote(turnText, 'хотим дом у моря')).toBe(false);
     expect(validateEvidenceQuote(turnText, 'бюджет 50 миллионов')).toBe(false);
+  });
+
+  // Scenario 27: Full Replay / Acceptance Run — Conversation Intelligence Pipeline
+  it('Scenario 27: executes full replay sequence without early return and with SPIN progression', () => {
+    let state = createInitialState();
+    const transcript: TranscriptTurn[] = [];
+
+    const turnsData = [
+      { speaker: 'agent' as const, text: 'Добрый день! Меня зовут Андрей, агентство недвижимости. Удобно говорить?' },
+      { speaker: 'client' as const, text: 'Да, здравствуйте, удобно.' },
+      { speaker: 'agent' as const, text: 'Подскажите, ищете недвижимость в Сочи для постоянного проживания или как инвестицию?' },
+      { speaker: 'client' as const, text: 'Мы ищем квартиру для себя, планируем переезд с семьей.' },
+      { speaker: 'agent' as const, text: 'Отлично! По бюджету на какую сумму ориентируетесь?' },
+      { speaker: 'client' as const, text: 'Бюджет у нас около 30 миллионов рублей, расчет наличными.' },
+      { speaker: 'agent' as const, text: 'Рассматриваете конкретный район или близость к морю?' },
+      { speaker: 'client' as const, text: 'Хотелось бы в Сириусе, но мы боимся шума от трассы и туристов, сейчас не можем нормально спать.' },
+      { speaker: 'agent' as const, text: 'Если бы удалось подобрать тихий закрытый двор со звукоизоляцией, насколько это решило бы вопрос?' },
+      { speaker: 'client' as const, text: 'Да, именно это нам и нужно, тишина и нормальный сон для детей.' },
+    ];
+
+    let lastAgentTurnText = '';
+
+    for (let i = 0; i < turnsData.length; i++) {
+      const data = turnsData[i];
+      const turn: TranscriptTurn = {
+        id: `turn_${i + 1}`,
+        sessionId: 'replay_session',
+        source: data.speaker === 'agent' ? 'microphone' : 'call_audio',
+        speaker: data.speaker,
+        text: data.text,
+        timestamp: Date.now() + i * 1000,
+        isFinal: true,
+      };
+      transcript.push(turn);
+
+      if (data.speaker === 'agent') {
+        lastAgentTurnText = data.text;
+        continue;
+      }
+
+      // 1. Client substantive check
+      expect(isSubstantiveClientTurn(turn.text)).toBe(true);
+
+      // 2. Deterministic facts extraction
+      const facts = extractDeterministicFacts(turn.text, turn.id);
+      if (facts.length > 0) {
+        const turnLookup: Record<string, string> = {};
+        transcript.forEach((t) => { turnLookup[t.id] = t.text; });
+        state = mergeFactsDelta(state, facts as any, state.stage, undefined, i + 1, turnLookup);
+      }
+
+      // 3. Client turn intent classification
+      const intent = classifyClientTurnIntent(turn.text, state);
+      expect(intent).toBeDefined();
+
+      // 4. Local objection check
+      const localObj = detectLocalObjection(turn.text, state);
+      if (localObj && intent.type === 'objection') {
+        state = {
+          ...state,
+          stage: 'objection_clarification',
+          objections: {
+            value: localObj.category,
+            items: state.objections.items.includes(localObj.category)
+              ? state.objections.items
+              : [...state.objections.items, localObj.category],
+            evidenceTurnIds: [...state.objections.evidenceTurnIds, turn.id],
+          },
+        };
+      }
+
+      // 5. SPIN Progression Evaluation (Must NOT be blocked even when local objection is checked)
+      const spinRes = evaluateSpinAndHpb(turn, state.spin, 'none', lastAgentTurnText);
+      if (spinRes?.updatedSpin) {
+        state = {
+          ...state,
+          spin: spinRes.updatedSpin,
+          spinState: spinRes.updatedSpin,
+        };
+      }
+    }
+
+    // Verify final state after replay
+    // Budget & Payment & Location & Goal facts extracted
+    expect(state.budget.value).toContain('30');
+    expect(state.paymentMethod.value).toBe('наличные');
+    expect(state.location.value).toBe('Сириус');
+    expect(state.goal.value).toBe('Постоянное личное проживание');
+
+    // SPIN progression reached completed stages
+    expect(state.spin.completedStages.length).toBeGreaterThan(0);
+    expect(state.spin.completedStages).toContain('PROBLEM');
+    expect(state.spin.completedStages).toContain('NEED_PAYOFF');
   });
 });
 

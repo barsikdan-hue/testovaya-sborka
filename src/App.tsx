@@ -23,13 +23,19 @@ import {
   SuggestionLockState,
   TranscriptTurn,
 } from './types';
-import { detectLocalObjection, isSubstantiveClientTurn } from './services/objectionEngine';
+import {
+  detectLocalObjection,
+  isSubstantiveClientTurn,
+  classifyClientTurnIntent,
+} from './services/objectionEngine';
+import { evaluateSpinAndHpb } from './services/spinEngine';
 import { DualAudioCapture } from './services/audioCapture';
 import { LiveTranscriptionChannel } from './services/transcriptionService';
 import { SalesDecisionEngine, DEFAULT_RULES } from './services/salesDecisionEngine';
 import { AnalysisProvider } from './services/analysisProvider';
 import { createInitialState, mergeFactsDelta } from './services/conversationStore';
-import { evaluateFirstCallScript } from './services/firstCallScriptEngine';
+import { evaluateFirstCallScript, getFirstCallSuggestion } from './services/firstCallScriptEngine';
+import { checkSemanticAntiRepeat } from './services/semanticAntiRepeat';
 import { isDuplicateFinalTurn } from './services/sttDedup';
 import { extractDeterministicFacts } from './services/deterministicFacts';
 import {
@@ -374,9 +380,11 @@ export const App: React.FC = () => {
 
       // REQUIREMENT 5: Быстрый локальный режим для возражений (detectLocalObjection)
       // Срабатывает МГНОВЕННО без отправки запроса к Gemini API (факты уже сохранены выше!)
+      const clientIntent = classifyClientTurnIntent(trimmed, conversationStateRef.current);
       const localObjection = detectLocalObjection(trimmed, conversationStateRef.current);
-      if (localObjection) {
-        console.log('[Copilot] Локально распознано возражение без обращения к Gemini:', localObjection.category);
+
+      if (localObjection && clientIntent.type === 'objection') {
+        console.log('[Copilot] Локально распознано возражение без ожидания Gemini:', localObjection.category);
 
         const replyObj: SuggestedReply = {
           id: `reply_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -392,7 +400,14 @@ export const App: React.FC = () => {
           confidenceStatus: localObjection.confidenceStatus,
         };
 
-        // Обновляем состояние без ожидания Gemini
+        // Semantic Anti-Repeat check for local objection suggestion
+        const antiRepeatCheck = checkSemanticAntiRepeat(
+          replyObj,
+          conversationStateRef.current,
+          turnsRef.current.slice(-6)
+        );
+
+        // Обновляем состояние возражений (только если intent.type === 'objection')
         setConversationState((prev) => {
           const nextState: ConversationState = {
             ...prev,
@@ -409,16 +424,42 @@ export const App: React.FC = () => {
           return nextState;
         });
 
-        // Мгновенно отображаем карточку суфлёра
-        setCurrentSuggestion(replyObj);
-        currentSuggestionRef.current = replyObj;
-        setShouldSuggest(true);
-        suggestedRepliesHistoryRef.current = [replyObj, ...suggestedRepliesHistoryRef.current];
-        setSuggestedRepliesHistory(suggestedRepliesHistoryRef.current);
+        if (antiRepeatCheck.accepted) {
+          // Мгновенно отображаем карточку суфлёра
+          setCurrentSuggestion(replyObj);
+          currentSuggestionRef.current = replyObj;
+          setShouldSuggest(true);
+          suggestedRepliesHistoryRef.current = [replyObj, ...suggestedRepliesHistoryRef.current];
+          setSuggestedRepliesHistory(suggestedRepliesHistoryRef.current);
+        } else {
+          console.log(`[Semantic Anti-Repeat] Локальная подсказка отклонена антиповтором: ${antiRepeatCheck.rejectionReason}`);
+        }
 
-        setIsAnalyzing(false);
-        setIsRefiningContext(false);
-        return;
+        // ПРИМЕЧАНИЕ: early-return УБРАН!
+        // Анализ продолжается дальше в evaluateSpinAndHpb() и scheduleAnalysis,
+        // чтобы не блокировать извлечение фактов, гипотез и SPIN-прогрессию.
+      }
+
+      // SPIN Progression & HPB Evaluation (выполняется для всех содержательных реплик клиента)
+      const lastAgentTurn = [...turnsRef.current].reverse().find((t) => t.speaker === 'agent');
+      const currentSpin = conversationStateRef.current.spin || conversationStateRef.current.spinState;
+      const spinResult = evaluateSpinAndHpb(
+        newTurn,
+        currentSpin,
+        'none',
+        lastAgentTurn?.text || ''
+      );
+
+      if (spinResult?.updatedSpin) {
+        setConversationState((prev) => {
+          const nextState: ConversationState = {
+            ...prev,
+            spin: spinResult.updatedSpin,
+            spinState: spinResult.updatedSpin,
+          };
+          conversationStateRef.current = nextState;
+          return nextState;
+        });
       }
 
       // REQUIREMENT 19 & 20: Проверка условий перед вызовом Gemini API
@@ -525,6 +566,33 @@ export const App: React.FC = () => {
               stage: analysisResult.stage,
               confidenceStatus: 'high',
             };
+
+            // Requirement: Semantic Anti-Repeat check against current conversation state
+            const antiRepeatCheck = checkSemanticAntiRepeat(
+              suggestionObj,
+              conversationStateRef.current,
+              turnsRef.current.slice(-6)
+            );
+
+            if (!antiRepeatCheck.accepted) {
+              console.log(`[Semantic Anti-Repeat] Отклонена подсказка: ${antiRepeatCheck.rejectionReason}`);
+              // Try fallback suggestion based on actual open metrics
+              const fallback = getFirstCallSuggestion(
+                conversationStateRef.current.scriptProgress || evaluateFirstCallScript(turnsRef.current, conversationStateRef.current),
+                turnsRef.current.filter((t) => t.speaker === 'client').slice(-1)[0],
+                conversationStateRef.current
+              );
+              if (fallback) {
+                suggestionObj.text = fallback.suggestedReply;
+                suggestionObj.shortReason = fallback.shortReason;
+                suggestionObj.closesMetric = fallback.closesMetric;
+                suggestionObj.closesMetricLabel = fallback.closesMetricLabel;
+                suggestionObj.immediatePriority = fallback.immediatePriority;
+                suggestionObj.expectedClientMeaning = fallback.expectedClientMeaning;
+              } else {
+                return;
+              }
+            }
 
             suggestedRepliesHistoryRef.current = [suggestionObj, ...suggestedRepliesHistoryRef.current];
             setSuggestedRepliesHistory(suggestedRepliesHistoryRef.current);

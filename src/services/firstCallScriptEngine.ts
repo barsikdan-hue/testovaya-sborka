@@ -12,6 +12,14 @@ import {
 } from '../types';
 import { isSubstantiveClientTurn } from './objectionEngine';
 import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepeat';
+import {
+  hasWholeWord,
+  hasAnyWholeWord,
+  hasPhrase,
+  hasAnyPhrase,
+  normalizeRussianText,
+  tokenizeRussianText,
+} from './textUtils';
 
 export const CORE_12_CRITERIA_IDS = [
   'trust',
@@ -673,35 +681,36 @@ export function evaluateFirstCallScript(
     (f) => f.category === 'property_type' || f.category === 'propertyType'
   );
 
+  const hasHouseWord = hasAnyWholeWord(allClientText, ['дом', 'дома', 'домом', 'доме', 'коттедж', 'коттеджа', 'вилла', 'виллу', 'виллы']);
+  const hasAptWord = hasAnyWholeWord(allClientText, ['квартира', 'квартиру', 'квартиры', 'квартире', 'апартамент', 'апартаменты', 'апартаментов', 'апартаментах']);
+  const hasStudioWord = hasAnyWholeWord(allClientText, ['студия', 'студию', 'студии']);
+
   if (propFact && propFact.value) {
     propStatus = 'confirmed';
     propValue = propFact.value;
     propReason = 'Тип недвижимости подтверждён клиентом';
-  } else if (allClientText.includes('что-то небольшое у моря') || allClientText.includes('небольшое жилье')) {
+  } else if (hasAnyPhrase(allClientText, ['что-то небольшое у моря', 'небольшое жилье', 'небольшое жильё'])) {
     propStatus = 'partially_confirmed';
     propValue = 'Компактный формат у моря (тип и площадь требуют уточнения)';
     propReason = 'Озвучено пожелание компактного объекта, конкретный тип (квартира/апартаменты) требует уточнения.';
     propNeedsClarification = true;
-  } else if (
-    (allClientText.includes('дом') || allClientText.includes('коттедж')) &&
-    (allClientText.includes('квартир') || allClientText.includes('апартамент'))
-  ) {
+  } else if (hasHouseWord && hasAptWord) {
     propStatus = 'confirmed';
     propValue = 'Дом или квартира (допустимы оба формата)';
     propReason = 'Клиент озвучил несколько допустимых форматов (дом и квартира), выбор не сужен искусственно.';
-  } else if (allClientText.includes('апартамент')) {
+  } else if (hasAnyWholeWord(allClientText, ['апартамент', 'апартаменты', 'апартаментов', 'апартаментах'])) {
     propStatus = 'confirmed';
     propValue = 'Апартаменты';
     propReason = 'Клиент назвал апартаменты.';
-  } else if (allClientText.includes('квартир')) {
+  } else if (hasAnyWholeWord(allClientText, ['квартира', 'квартиру', 'квартиры', 'квартире'])) {
     propStatus = 'confirmed';
     propValue = 'Квартира';
     propReason = 'Клиент назвал квартиру.';
-  } else if (allClientText.includes('студи')) {
+  } else if (hasStudioWord) {
     propStatus = 'confirmed';
     propValue = 'Студия';
     propReason = 'Клиент назвал студию.';
-  } else if (allClientText.includes('дом') || allClientText.includes('коттедж') || allClientText.includes('вилл')) {
+  } else if (hasHouseWord) {
     propStatus = 'confirmed';
     propValue = 'Дом / Коттедж';
     propReason = 'Клиент назвал дом/коттедж.';
@@ -1122,16 +1131,20 @@ export function evaluateFirstCallScript(
   let empReason: string | null = null;
   let empNeedsClarification = false;
 
-  if (allClientText.includes('сам на себя') || allClientText.includes('частная практика')) {
+  const hasIpWord = hasWholeWord(allClientText, 'ип');
+  const hasBizWord = hasAnyWholeWord(allClientText, ['ооо', 'бизнес', 'бизнеса', 'предприниматель', 'предпринимателем', 'самозанятый', 'самозанятость']);
+  const hasHireWord = hasAnyWholeWord(allClientText, ['найм', 'найме', 'компании', 'официально', 'работа']);
+
+  if (hasAnyPhrase(allClientText, ['сам на себя', 'частная практика'])) {
     empStatus = 'partially_confirmed';
     empValue = 'Работает на себя (форма дохода требует уточнения: ИП или самозанятость)';
     empReason = 'Озвучена работа на себя, юридическая форма дохода (ИП/самозанятость) не уточнена.';
     empNeedsClarification = true;
-  } else if (allClientText.includes('ип') || allClientText.includes('ооо') || allClientText.includes('бизнес') || allClientText.includes('предпринимател')) {
+  } else if (hasIpWord || hasBizWord) {
     empStatus = 'confirmed';
-    empValue = allClientText.includes('ип') ? 'Индивидуальный предприниматель (ИП)' : 'Собственник бизнеса / предприниматель';
+    empValue = hasIpWord ? 'Индивидуальный предприниматель (ИП)' : 'Собственник бизнеса / предприниматель';
     empReason = 'Занятость подтверждена: предпринимательская деятельность.';
-  } else if (allClientText.includes('найм') || allClientText.includes('компании') || allClientText.includes('официально')) {
+  } else if (hasHireWord) {
     empStatus = 'confirmed';
     empValue = 'Работа в найме (официальное трудоустройство)';
     empReason = 'Занятость подтверждена: работа в компании.';
@@ -1244,15 +1257,15 @@ export function evaluateFirstCallScript(
   let dmValue = state.decisionMakers?.value || null;
   let dmReason: string | null = null;
 
-  if (allClientText.includes('деньги у мужа') && (allClientText.includes('выбирать буду я') || allClientText.includes('выбираю я'))) {
+  if (hasAnyPhrase(allClientText, ['деньги у мужа', 'деньги у супруга']) && (hasAnyPhrase(allClientText, ['выбирать буду я', 'выбираю я', 'решаю я']))) {
     dmStatus = 'confirmed';
     dmValue = 'Разделение ролей: выбор за клиентом, финансирование за супругом';
     dmReason = 'Роли в сделке чётко распределены: пользователь и плательщик определены.';
-  } else if (allClientText.includes('с мужем') || allClientText.includes('с женой') || allClientText.includes('с супруг') || allClientText.includes('решаем вместе') || allClientText.includes('с семьей')) {
+  } else if (hasAnyPhrase(allClientText, ['с мужем', 'с женой', 'с супругом', 'с супругой', 'решаем вместе', 'с семьей', 'с семьёй', 'вместе с мужем', 'вместе с женой'])) {
     dmStatus = 'confirmed';
     dmValue = 'Совместное решение с семьёй / супругом';
     dmReason = 'Подтверждено участие членов семьи в принятии решения.';
-  } else if (allClientText.includes('сам принимаю') || allClientText.includes('сам реш') || allClientText.includes('один выбираю')) {
+  } else if (hasAnyPhrase(allClientText, ['сам принимаю', 'сама принимаю', 'сам решаю', 'сама решаю', 'один выбираю', 'одна выбираю', 'решаю сам', 'решаю сама'])) {
     dmStatus = 'confirmed';
     dmValue = 'Принимает решение единолично (самостоятельный ЛПР)';
     dmReason = 'Клиент подтвердил единоличное принятие инвестиционного решения.';
@@ -1608,9 +1621,18 @@ export function getFirstCallSuggestion(
 } | null {
   const lastClientText = lastClientTurn?.text?.toLowerCase() || '';
 
-  // 1. Clarify "для себя"
-  if (lastClientText.includes('для себя') && !lastClientText.includes('переезд') && !lastClientText.includes('отдых')) {
-    return {
+  const candidates: Array<{
+    closesMetric: string;
+    closesMetricLabel: string;
+    immediatePriority: string;
+    suggestedReply: string;
+    shortReason: string;
+    recognizedMeaning?: string;
+    expectedClientMeaning: string;
+    condition: () => boolean;
+  }> = [
+    // 1. Clarify "для себя"
+    {
       closesMetric: 'goal',
       closesMetricLabel: 'Цель покупки',
       immediatePriority: 'Следующий шаг: разграничить формат покупки («для себя»)',
@@ -1618,16 +1640,14 @@ export function getFirstCallSuggestion(
       shortReason: '«Для себя» не равно переезду или ПМЖ. Необходима точная цель перед формированием пула объектов.',
       recognizedMeaning: 'Клиент озвучил личное использование («для себя»), но не конкретизировал отдых или ПМЖ.',
       expectedClientMeaning: 'Клиент уточняет сценарий: летний отдых, сдача в межсезонье или полноценный переезд.',
-    };
-  }
-
-  // 2. Client condition: need to sell flat first
-  if (
-    lastClientText.includes('сначала продам') ||
-    lastClientText.includes('нужно продать') ||
-    lastClientText.includes('продаем свою')
-  ) {
-    return {
+      condition: () =>
+        lastClientText.includes('для себя') &&
+        !lastClientText.includes('переезд') &&
+        !lastClientText.includes('отдых') &&
+        progress.metrics['goal']?.status !== 'confirmed',
+    },
+    // 2. Client condition: need to sell flat first
+    {
       closesMetric: 'downPaymentSource',
       closesMetricLabel: 'Источник первоначального взноса',
       immediatePriority: 'Следующий приоритет: выяснить статус продажи текущего жилья',
@@ -1635,12 +1655,14 @@ export function getFirstCallSuggestion(
       shortReason: 'Покупка зависит от продажи жилья. Фиксируем условие и стадию без ложной спешки.',
       recognizedMeaning: 'Клиент готов рассматривать покупку, но решение зависит от продажи текущей квартиры.',
       expectedClientMeaning: 'Клиент называет реальный статус продажи и ожидаемую сумму на руках.',
-    };
-  }
-
-  // 3. Client objection: "Пришлите фото"
-  if (lastClientText.includes('пришлите фото') || lastClientText.includes('скиньте фото') || lastClientText.includes('отправьте фото')) {
-    return {
+      condition: () =>
+        (lastClientText.includes('сначала продам') ||
+          lastClientText.includes('нужно продать') ||
+          lastClientText.includes('продаем свою')) &&
+        progress.metrics['downPaymentSource']?.status !== 'confirmed',
+    },
+    // 3. Client objection: "Пришлите фото"
+    {
       closesMetric: 'ppv',
       closesMetricLabel: 'Вывод на видеопрезентацию (ППВ)',
       immediatePriority: 'Отработка возражения: перевод с фото на 15-минутный видеопоказ',
@@ -1648,12 +1670,14 @@ export function getFirstCallSuggestion(
       shortReason: 'Признание сомнения, изоляция возражения и вывод на видеопоказ со специалистом застройщика.',
       recognizedMeaning: 'Клиент просит прислать фото в мессенджер вместо назначения следующего шага.',
       expectedClientMeaning: 'Клиент соглашается уделить 15 минут на видеопоказ вместо поверхностных фото.',
-    };
-  }
-
-  // 4. Missing Decision Maker (only if not already disclosed!)
-  if (progress.metrics['decisionMaker'].status === 'not_confirmed' && progress.metrics['goal'].status === 'confirmed') {
-    return {
+      condition: () =>
+        (lastClientText.includes('пришлите фото') ||
+          lastClientText.includes('скиньте фото') ||
+          lastClientText.includes('отправьте фото')) &&
+        progress.metrics['ppv']?.status !== 'confirmed',
+    },
+    // 4. Missing Decision Maker (only if not already disclosed!)
+    {
       closesMetric: 'decisionMaker',
       closesMetricLabel: 'Лицо, принимающее решение (ЛПР)',
       immediatePriority: 'Следующий шаг: проверить участников решения',
@@ -1661,12 +1685,12 @@ export function getFirstCallSuggestion(
       shortReason: 'Выявление всех участников выбора и распорядителей бюджета перед показом.',
       recognizedMeaning: 'Участники принятия решения пока не зафиксированы.',
       expectedClientMeaning: 'Клиент называет супруга, семью или подтверждает единоличное решение.',
-    };
-  }
-
-  // 5. Missing Down payment source
-  if (progress.metrics['downPaymentSource'].status === 'not_confirmed' && progress.metrics['downPayment'].status === 'confirmed') {
-    return {
+      condition: () =>
+        progress.metrics['decisionMaker']?.status === 'not_confirmed' &&
+        progress.metrics['goal']?.status === 'confirmed',
+    },
+    // 5. Missing Down payment source
+    {
       closesMetric: 'downPaymentSource',
       closesMetricLabel: 'Источник первоначального взноса',
       immediatePriority: 'Следующий приоритет: выяснить источник первоначального взноса',
@@ -1674,12 +1698,12 @@ export function getFirstCallSuggestion(
       shortReason: 'Финансовая квалификация: подтверждение реальной готовности средств к сделке.',
       recognizedMeaning: 'Сумма первого взноса названа, но источник её получения не подтверждён.',
       expectedClientMeaning: 'Клиент подтверждает наличие средств либо называет источник финансирования.',
-    };
-  }
-
-  // 6. Propose PPV (Video Presentation)
-  if (progress.metrics['ppv'].status !== 'confirmed' && progress.metrics['goal'].status === 'confirmed') {
-    return {
+      condition: () =>
+        progress.metrics['downPaymentSource']?.status === 'not_confirmed' &&
+        progress.metrics['downPayment']?.status === 'confirmed',
+    },
+    // 6. Propose PPV (Video Presentation)
+    {
       closesMetric: 'ppv',
       closesMetricLabel: 'Вывод на видеопрезентацию (ППВ)',
       immediatePriority: 'Следующий приоритет: согласовать видеопрезентацию с экспертом',
@@ -1687,7 +1711,31 @@ export function getFirstCallSuggestion(
       shortReason: 'ППВ — обязательный критерий звонка. Привязка к ценности, эксперт застройщика и вилка времени.',
       recognizedMeaning: 'Потребность выявлена, требуется перевод диалога в целевой следующий шаг (видеопоказ).',
       expectedClientMeaning: 'Клиент выбирает удобный слот для короткого видеопоказа на экране.',
-    };
+      condition: () =>
+        progress.metrics['ppv']?.status !== 'confirmed' &&
+        progress.metrics['goal']?.status === 'confirmed',
+    },
+  ];
+
+  for (const c of candidates) {
+    if (c.condition()) {
+      // Validate with Semantic Anti-Repeat
+      const check = checkSemanticAntiRepeat(
+        { text: c.suggestedReply, semanticKey: extractSemanticKey({ text: c.suggestedReply, closesMetric: c.closesMetric }) },
+        state
+      );
+      if (check.accepted) {
+        return {
+          closesMetric: c.closesMetric,
+          closesMetricLabel: c.closesMetricLabel,
+          immediatePriority: c.immediatePriority,
+          suggestedReply: c.suggestedReply,
+          shortReason: c.shortReason,
+          recognizedMeaning: c.recognizedMeaning,
+          expectedClientMeaning: c.expectedClientMeaning,
+        };
+      }
+    }
   }
 
   return null;

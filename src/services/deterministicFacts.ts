@@ -122,10 +122,13 @@ export function extractDeterministicFacts(text: string, turnId: string): Extract
   }
 
   // 4. Payment Method & Financing
+  const cashMatch = lower.match(/(?:наличн(?:ые|ыми|ых)|расчет\s*наличными|расчёт\s*наличными|100%\s*оплата|свои\s*средства)/iu);
   const mortgageMatch = lower.match(/(?:ипотек(?:а|у|ой)|в\s*ипотеку)/iu);
   const installmentMatch = lower.match(/(?:рассрочк(?:а|у|ой)|в\s*рассрочку)/iu);
   if (mortgageMatch && installmentMatch) {
     addFact('paymentMethod', 'paymentMethod', 'Ипотека / Рассрочка (допустимы оба варианта)', `${mortgageMatch[0]}, ${installmentMatch[0]}`);
+  } else if (cashMatch) {
+    addFact('paymentMethod', 'paymentMethod', 'наличные', cashMatch[0]);
   } else if (mortgageMatch) {
     addFact('paymentMethod', 'paymentMethod', 'Ипотека', mortgageMatch[0]);
   } else if (installmentMatch) {

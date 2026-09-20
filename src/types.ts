@@ -305,6 +305,7 @@ export interface ConversationState {
   };
   confirmedFacts: ConfirmedFact[];
   spin: SpinState;
+  spinState?: SpinState;
   hpbPresentation?: HpbLink | null;
   lastAgentAction?: AgentActionType;
   suggestionMode?: SuggestionMode;
@@ -316,6 +317,7 @@ export interface ConversationState {
   trustEvaluation?: TrustEvaluation;
   qualityResult?: QualityControlResult;
   purchaseDependency?: string | null;
+  downPayment?: FactEntry;
   downPaymentSource?: FactEntry;
   familyMortgage?: FactEntry;
   propertyType?: FactEntry;

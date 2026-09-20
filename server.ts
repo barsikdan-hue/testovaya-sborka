@@ -16,7 +16,9 @@ import {
   getFirstCallSuggestion,
   FIRST_CALL_METRICS_LIST,
 } from './src/services/firstCallScriptEngine';
+import { checkSemanticAntiRepeat } from './src/services/semanticAntiRepeat';
 import { selectCandidateRules } from './src/services/candidateRules';
+import { validateEvidenceQuote } from './src/services/textUtils';
 
 dotenv.config();
 
@@ -702,15 +704,14 @@ ${formattedNewTurns}
           continue;
         }
 
-        const turnTextLower = clientTurn.text.toLowerCase();
-        const quoteLower = quote.toLowerCase();
-
-        // Ensure the quote is actually grounded in the turn text
-        const hasOverlap = turnTextLower.includes(quoteLower) ||
-          quoteLower.split(/\s+/).some((w: string) => w.length > 4 && turnTextLower.includes(w));
-        if (!hasOverlap) {
+        // Enforce evidence invariant: quote MUST be a valid substring of client turn
+        const isValidQuote = validateEvidenceQuote(clientTurn.text, quote);
+        if (!isValidQuote) {
+          console.log(`[Evidence Invariant] Rejected fact for quote not found in client turn: "${quote}"`);
           continue;
         }
+
+        const turnTextLower = clientTurn.text.toLowerCase();
 
         // Anti-hallucination check: children/schools
         const mentionsKids =
@@ -942,6 +943,33 @@ ${formattedNewTurns}
           parsed.closesMetricLabel = targetMetric.name;
           if (!parsed.immediatePriority) {
             parsed.immediatePriority = `Следующий приоритет: ${targetMetric.name}`;
+          }
+        }
+      }
+
+      // Semantic Anti-Repeat server check
+      if (parsed.suggestedReply) {
+        const antiRepeatCheck = checkSemanticAntiRepeat(
+          { text: parsed.suggestedReply, closesMetric: parsed.closesMetric },
+          { ...(currentState || {}), scriptProgress },
+          recentTurns || []
+        );
+
+        if (!antiRepeatCheck.accepted) {
+          console.log(`[Server Semantic Anti-Repeat] Rejected model reply: ${antiRepeatCheck.rejectionReason}`);
+          const fallback = getFirstCallSuggestion(
+            scriptProgress,
+            lastClientTurn,
+            { ...(currentState || {}), scriptProgress }
+          );
+          if (fallback) {
+            parsed.suggestedReply = fallback.suggestedReply;
+            parsed.shortReason = fallback.shortReason;
+            parsed.closesMetric = fallback.closesMetric;
+            parsed.closesMetricLabel = fallback.closesMetricLabel;
+            parsed.immediatePriority = fallback.immediatePriority;
+            parsed.expectedClientMeaning = fallback.expectedClientMeaning;
+            parsed.recognizedMeaning = fallback.recognizedMeaning;
           }
         }
       }
