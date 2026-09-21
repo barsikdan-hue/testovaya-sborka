@@ -42,7 +42,7 @@ export type ActionType =
 
 export type SuggestionFeedback = 'useful' | 'irrelevant' | 'already_discussed';
 
-export type HintLifecycleStatus = 'candidate' | 'shown' | 'expired' | 'superseded' | 'used';
+export type HintLifecycleStatus = 'candidate' | 'shown' | 'used' | 'expired' | 'superseded' | 'suppressed';
 
 export interface NextStepAgreement {
   action: string;

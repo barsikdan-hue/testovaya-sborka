@@ -29,10 +29,12 @@ export class AnalysisProvider {
   private pendingBatchTurns: TranscriptTurn[] = [];
   private pendingLatestState: ConversationState | null = null;
   private pendingRevision: number = 0;
+  private pendingRecentTurns: TranscriptTurn[] = [];
   private pendingSuccessCb: ((result: AnalysisResponse) => void) | null = null;
   private pendingErrorCb: ((err: any) => void) | null = null;
   private pendingRefiningCb: ((isRefining: boolean) => void) | null = null;
   private memoryBacklog: TranscriptTurn[] = [];
+  private static readonly MAX_MEMORY_BACKLOG = 50;
 
   // Quota optimization state & protections
   private analyzedTurnIds: Set<string> = new Set();
@@ -162,7 +164,14 @@ export class AnalysisProvider {
       this.currentSessionId = payload.sessionId;
     }
 
-    // Memory-only backlog: append new turns (deduplicated by ID)
+    // Memory-only backlog: append turns from both sides (deduplicated by ID)
+    if (payload.recentTurns && payload.recentTurns.length > 0) {
+      for (const t of payload.recentTurns) {
+        if (!this.memoryBacklog.some((m) => m.id === t.id)) {
+          this.memoryBacklog.push(t);
+        }
+      }
+    }
     if (payload.newTurns && payload.newTurns.length > 0) {
       for (const t of payload.newTurns) {
         if (!this.memoryBacklog.some((m) => m.id === t.id)) {
@@ -170,10 +179,14 @@ export class AnalysisProvider {
         }
       }
     }
+    // Bound memory backlog to prevent infinite growth
+    if (this.memoryBacklog.length > AnalysisProvider.MAX_MEMORY_BACKLOG) {
+      this.memoryBacklog = this.memoryBacklog.slice(-AnalysisProvider.MAX_MEMORY_BACKLOG);
+    }
 
     // STAGE 2 SCHEDULER:
     // If a request is already in-flight, DO NOT ABORT!
-    // Instead, accumulate into pendingBatch and remember latest state/revision.
+    // Instead, accumulate into pendingBatch and remember latest state/revision and recent context.
     if (this.isInFlight) {
       if (payload.newTurns && payload.newTurns.length > 0) {
         for (const t of payload.newTurns) {
@@ -182,6 +195,9 @@ export class AnalysisProvider {
           }
         }
       }
+      this.pendingRecentTurns = payload.recentTurns && payload.recentTurns.length > 0
+        ? [...payload.recentTurns]
+        : [...this.memoryBacklog.slice(-10)];
       this.pendingLatestState = payload.currentState;
       this.pendingRevision = Math.max(this.pendingRevision, payload.revision);
       this.pendingSuccessCb = onSuccess;
@@ -340,14 +356,20 @@ export class AnalysisProvider {
         this.pendingErrorCb = null;
         this.pendingRefiningCb = null;
 
+        // Queued analysis MUST see both the previous Andrei question and client answer
+        const boundedRecent = this.pendingRecentTurns.length > 0
+          ? this.pendingRecentTurns.slice(-10)
+          : this.memoryBacklog.slice(-10);
+
         this.pendingPayload = {
           sessionId: reqSessionId,
           revision: nextRev,
-          recentTurns: [...this.memoryBacklog.slice(-10)],
+          recentTurns: boundedRecent,
           newTurns: nextTurns,
           currentState: nextState,
           reason: `Накопленный batch (${nextTurns.length} реплик)`,
         };
+        this.pendingRecentTurns = [];
 
         // Fire next analysis batch immediately
         this.executeAnalysis(nextSuccess, nextError, nextRefining);
@@ -356,6 +378,7 @@ export class AnalysisProvider {
   }
 
   public cancelPending() {
+    this.pendingRecentTurns = [];
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;

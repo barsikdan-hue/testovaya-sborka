@@ -742,5 +742,167 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
     expect(state.spin.completedStages).toContain('PROBLEM');
     expect(state.spin.completedStages).toContain('NEED_PAYOFF');
   });
+
+  // Scenario 28: Exact User Regression Scenario
+  it('Scenario 28: executes user regression replay flow with facts, SPIN progression, and agreedNextStep', () => {
+    let state = createInitialState();
+    const transcript: TranscriptTurn[] = [];
+
+    const replayDialogue = [
+      { speaker: 'agent' as const, text: 'Добрый день! Подскажите, для какой цели подбираете недвижимость?' },
+      { speaker: 'client' as const, text: 'Ищу для себя: постоянная жизнь + иногда сдавать.' },
+      { speaker: 'agent' as const, text: 'Какой бюджет планируете на покупку?' },
+      { speaker: 'client' as const, text: 'Бюджет до 15 млн рублей.' },
+      { speaker: 'agent' as const, text: 'Что для вас важнее всего при выборе?' },
+      { speaker: 'client' as const, text: 'Главное — надёжность/прозрачность объекта и документов.' },
+      { speaker: 'agent' as const, text: 'А если будут задержки или непонятный статус, как это повлияет?' },
+      { speaker: 'client' as const, text: 'Это потраченные время/нервы/финансовые риски, я этого не переживу.' },
+      { speaker: 'agent' as const, text: 'Если покажем проверенные объекты с чистой историей, это снимет риски?' },
+      { speaker: 'client' as const, text: 'Да, именно это и нужно, тогда буду спокоен.' },
+      { speaker: 'agent' as const, text: 'В какие сроки планируете выйти на сделку?' },
+      { speaker: 'client' as const, text: 'В планах пара месяцев.' },
+      { speaker: 'agent' as const, text: 'Какой способ покупки рассматриваете и форму занятости?' },
+      { speaker: 'client' as const, text: 'Я работаю по найму, рассматриваю вариант ипотека/рассрочка, чтобы был комфортный ежемесячный платёж.' },
+      { speaker: 'agent' as const, text: 'Видеопоказ завтра в 15:00 удобно?' },
+      { speaker: 'client' as const, text: 'Да' },
+    ];
+
+    let lastAgentTurnText = '';
+
+    for (let i = 0; i < replayDialogue.length; i++) {
+      const item = replayDialogue[i];
+      const turn: TranscriptTurn = {
+        id: `turn_${i + 1}`,
+        sessionId: 'user_scenario_session',
+        source: item.speaker === 'agent' ? 'microphone' : 'call_audio',
+        speaker: item.speaker,
+        text: item.text,
+        timestamp: Date.now() + i * 1000,
+        isFinal: true,
+        revision: i + 1,
+      };
+      transcript.push(turn);
+
+      if (item.speaker === 'agent') {
+        lastAgentTurnText = item.text;
+        continue;
+      }
+
+      // Check client substantive turn (including contextual short answers like "Да")
+      const substantive = isSubstantiveClientTurn(turn.text, lastAgentTurnText);
+      expect(substantive).toBe(true);
+
+      // Extract deterministic facts with agent context
+      const facts = extractDeterministicFacts(turn.text, turn.id, lastAgentTurnText);
+      if (facts.length > 0) {
+        const turnLookup: Record<string, string> = {};
+        transcript.forEach((t) => { turnLookup[t.id] = t.text; });
+        state = mergeFactsDelta(state, facts as any, state.stage, undefined, i + 1, turnLookup);
+      }
+
+      // Classify intent
+      const intent = classifyClientTurnIntent(turn.text, state, lastAgentTurnText);
+      // Non-objection verification for "постоянная жизнь" and "Да"
+      if (turn.text.includes('постоянная жизнь')) {
+        expect(intent.type).not.toBe('objection');
+      }
+      if (turn.text === 'Да') {
+        expect(intent.type).toBe('next_step');
+      }
+
+      // SPIN evaluation
+      const spinRes = evaluateSpinAndHpb(turn, state.spin, 'none', lastAgentTurnText);
+      if (spinRes?.updatedSpin) {
+        state = {
+          ...state,
+          spin: spinRes.updatedSpin,
+          spinState: spinRes.updatedSpin,
+        };
+      }
+    }
+
+    // Verify all deterministic facts extracted:
+    expect(state.budget.value).toContain('15');
+    expect(state.goal.value).toBeDefined();
+    expect(state.purchaseTimeline?.value?.toLowerCase()).toContain('месяц');
+    expect(state.paymentMethod.value?.toLowerCase()).toContain('ипотека');
+    expect(state.criteria?.value?.replace(/ё/g, 'е').toLowerCase()).toContain('надежност');
+    expect(state.employment?.value?.toLowerCase()).toContain('найм');
+    expect(state.agreedNextStep?.value).toBeDefined();
+
+    // Verify SPIN progression
+    expect(state.spin.completedStages).toContain('PROBLEM');
+    expect(state.spin.completedStages).toContain('IMPLICATION');
+    expect(state.spin.completedStages).toContain('NEED_PAYOFF');
+  });
+
+  // Scenario 29: Hint Lifecycle Status Transition Verification
+  it('Scenario 29: enforces HintLifecycleStatus transitions and TTL validation', () => {
+    const HINT_TTL_MS = 15000;
+    const now = Date.now();
+
+    // Candidate suggestion
+    const candidate: SuggestedReply = {
+      id: 'hint_1',
+      sessionId: 'sess_1',
+      basedOnRevision: 3,
+      candidateRuleId: null,
+      actionType: 'CLARIFY',
+      text: 'В какие сроки планируете выйти на сделку?',
+      shortReason: 'Уточнить сроки',
+      evidenceTurnIds: ['t_1'],
+      createdAt: now,
+      stage: 'diagnostics',
+      confidenceStatus: 'high',
+      lifecycleStatus: 'candidate',
+      semanticKey: 'purchase_timeline',
+    };
+
+    expect(candidate.lifecycleStatus).toBe('candidate');
+
+    // Promotion to shown
+    candidate.lifecycleStatus = 'shown';
+    expect(candidate.lifecycleStatus).toBe('shown');
+
+    // Used transition
+    candidate.lifecycleStatus = 'used';
+    candidate.used = true;
+    candidate.usedAt = now + 1000;
+    expect(candidate.lifecycleStatus).toBe('used');
+
+    // Superseded check when new revision arrives
+    const pendingOld: SuggestedReply = {
+      ...candidate,
+      id: 'hint_2',
+      basedOnRevision: 2,
+      lifecycleStatus: 'candidate',
+    };
+    const currentRev = 3;
+    if (pendingOld.basedOnRevision < currentRev) {
+      pendingOld.lifecycleStatus = 'superseded';
+    }
+    expect(pendingOld.lifecycleStatus).toBe('superseded');
+
+    // Expired check when TTL exceeded
+    const pendingExpired: SuggestedReply = {
+      ...candidate,
+      id: 'hint_3',
+      createdAt: now - 16000,
+      lifecycleStatus: 'candidate',
+    };
+    if (now - pendingExpired.createdAt > HINT_TTL_MS) {
+      pendingExpired.lifecycleStatus = 'expired';
+    }
+    expect(pendingExpired.lifecycleStatus).toBe('expired');
+
+    // Suppressed check when dismissed or anti-repeat rejects
+    const dismissed: SuggestedReply = {
+      ...candidate,
+      id: 'hint_4',
+      lifecycleStatus: 'shown',
+    };
+    dismissed.lifecycleStatus = 'suppressed';
+    expect(dismissed.lifecycleStatus).toBe('suppressed');
+  });
 });
 

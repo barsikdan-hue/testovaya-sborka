@@ -25,8 +25,9 @@ export interface FastObjectionResult {
  * Check whether a client turn is a substantive, meaningful utterance
  * (not a tiny filler / confirmation word like "угу", "да", "понял").
  * Preserves short business-critical turns: goal, budget, timeline, location, family, payment, objections.
+ * Also analyzes short answers ("да / нет / хорошо / конечно") if answering a meaningful previous agent turn.
  */
-export function isSubstantiveClientTurn(text: string): boolean {
+export function isSubstantiveClientTurn(text: string, previousAgentTurn?: string | null): boolean {
   if (!text) return false;
   const clean = text
     .toLowerCase()
@@ -34,6 +35,55 @@ export function isSubstantiveClientTurn(text: string): boolean {
     .trim();
 
   if (!clean) return false;
+
+  // Contextual short answers: "да / нет / хорошо / конечно / удобно / договорились"
+  // analyzed only if this is a response to a meaningful previous agent turn!
+  const contextualShortAnswers = new Set([
+    'да',
+    'нет',
+    'хорошо',
+    'конечно',
+    'согласен',
+    'согласна',
+    'договорились',
+    'удобно',
+    'давайте',
+    'ок',
+    'окей',
+    'ладно',
+    'подходит',
+    'точно',
+    'да конечно',
+    'ну да',
+  ]);
+
+  if (contextualShortAnswers.has(clean) && previousAgentTurn && previousAgentTurn.trim().length >= 8) {
+    const prevLower = previousAgentTurn.toLowerCase();
+    const isMeaningfulAgentTurn =
+      prevLower.includes('?') ||
+      hasAnyPhrase(prevLower, [
+        'удобно',
+        'видеопоказ',
+        'видео',
+        'показ',
+        'созвон',
+        'зум',
+        'встреч',
+        'договорились',
+        'согласны',
+        'готовы',
+        'время',
+        'завтра',
+        'рассматрива',
+        'планиру',
+        'подходит',
+        'верно',
+        'правильно',
+      ]);
+    if (isMeaningfulAgentTurn) {
+      return true;
+    }
+  }
 
   // Pure filler words with zero business content
   const pureFillers = new Set([
@@ -385,17 +435,35 @@ export function detectLocalObjection(
     };
   }
 
-  // 10. Нужно обсудить с супругом / семьей
-  if (
+  // 10. Нужно обсудить с супругом / семьей (только при реальном барьере согласования, а не простом факте)
+  const hasSpouseBarrier =
     hasAnyPhrase(lower, [
-      'с супругом',
-      'с супругой',
-      'с мужем',
-      'с женой',
-      'с семьей',
-      'с семьёй',
-    ])
-  ) {
+      'нужно посоветоваться',
+      'надо посоветоваться',
+      'посоветуюсь с',
+      'нужно обсудить',
+      'надо обсудить',
+      'обсужу с',
+      'нужно поговорить',
+      'надо поговорить',
+      'поговорю с',
+      'решает муж',
+      'решает жена',
+      'решает супруг',
+      'решает супруга',
+      'без мужа не',
+      'без жены не',
+      'без супруга не',
+      'без супруги не',
+      'муж против',
+      'жена против',
+      'согласую с',
+      'согласовать с',
+    ]) ||
+    (hasAnyPhrase(lower, ['с супругом', 'с супругой', 'с мужем', 'с женой', 'с семьей', 'с семьёй']) &&
+     hasAnyWholeWord(lower, ['посоветоваться', 'обсудить', 'поговорить', 'согласовать', 'решает', 'против', 'спрошу']));
+
+  if (hasSpouseBarrier) {
     return {
       id: 'objection_spouse',
       category: 'objection_decision_maker',
@@ -607,15 +675,17 @@ export function detectLocalObjection(
  * - 'stop': refusal to communicate or request to delete number
  * - 'next_step': agreement or proposal of next step / call / meeting
  * - 'objection': real objection or resistance
- * - 'clarification': question or inquiry about property / conditions
+ * - 'clarification': question or inquiry about property / conditions / requests
  * - 'preference': stated criteria, desires, requirements
- * - 'fact': factual data about client, budget, property status
+ * - 'fact': factual data about client, budget, property status, living format
  */
 export function classifyClientTurnIntent(
   clientText: string,
-  state?: ConversationState
+  state?: ConversationState,
+  previousAgentTurn?: string | null
 ): ClientTurnIntent {
   const lower = clientText.toLowerCase().trim();
+  const clean = lower.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim();
 
   // 1. Stop / refusal to continue
   if (
@@ -640,7 +710,31 @@ export function classifyClientTurnIntent(
     };
   }
 
-  // 2. Next step agreement / scheduling
+  // 2. Next step agreement / scheduling (including contextual short answers like "да" to a next step proposal)
+  const isAffirmative = hasAnyWholeWord(clean, [
+    'да',
+    'хорошо',
+    'конечно',
+    'согласен',
+    'согласна',
+    'удобно',
+    'договорились',
+    'давайте',
+    'ок',
+    'окей',
+    'подходит',
+    'точно',
+  ]);
+
+  const agentAskedNextStep =
+    previousAgentTurn &&
+    (previousAgentTurn.toLowerCase().includes('видеопоказ') ||
+      previousAgentTurn.toLowerCase().includes('показ') ||
+      previousAgentTurn.toLowerCase().includes('созвон') ||
+      previousAgentTurn.toLowerCase().includes('зум') ||
+      previousAgentTurn.toLowerCase().includes('встреч') ||
+      (previousAgentTurn.toLowerCase().includes('завтра') && previousAgentTurn.toLowerCase().includes('удобно')));
+
   if (
     hasAnyPhrase(lower, [
       'давайте созвонимся',
@@ -659,7 +753,8 @@ export function classifyClientTurnIntent(
       'пришлите ссылку',
       'договорились по времени',
     ]) ||
-    (hasAnyPhrase(lower, ['давайте завтра', 'удобно завтра', 'согласен на видео', 'созвонимся']) && !lower.includes('не хочу'))
+    (hasAnyPhrase(lower, ['давайте завтра', 'удобно завтра', 'согласен на видео', 'созвонимся']) && !lower.includes('не хочу')) ||
+    (isAffirmative && agentAskedNextStep)
   ) {
     return {
       type: 'next_step',
@@ -669,7 +764,40 @@ export function classifyClientTurnIntent(
     };
   }
 
-  // 3. Local objection check
+  // 3. Identification of pure factual utterances (MUST NEVER become objections):
+  // «Для себя / постоянное проживание / spouse fact / request / preference / next step != objection»
+  const isFactUtterance =
+    hasAnyPhrase(lower, [
+      'для себя',
+      'для постоянного проживания',
+      'для постоянной жизни',
+      'постоянное проживание',
+      'постоянная жизнь',
+      'постоянно жить',
+      'будем жить',
+      'буду жить',
+      'переезжаем',
+      'планируем переезд',
+      'хочу переехать',
+      'пмж',
+      'с семьей',
+      'с семьёй',
+      'с женой',
+      'с мужем',
+      'с супругой',
+      'с супругом',
+      'по найму',
+      'в найме',
+      'работаю по найму',
+      'ипотека/рассрочка',
+      'ежемесячный платеж',
+      'ежемесячный платёж',
+      'пара месяцев',
+      'пару месяцев',
+    ]) ||
+    hasAnyWholeWord(lower, ['миллион', 'миллионов', 'млн', 'бюджет', 'наличные', 'наличка']);
+
+  // 4. Local objection check (detectLocalObjection)
   const localObj = detectLocalObjection(clientText, state);
   if (localObj) {
     if (localObj.category === 'stop_contact') {
@@ -681,16 +809,57 @@ export function classifyClientTurnIntent(
         confidence: 0.95,
       };
     }
-    return {
-      type: 'objection',
-      category: localObj.category,
-      ruleId: localObj.ruleId,
-      text: localObj.text,
-      confidence: 0.9,
-    };
+
+    // Motive clarify rules (e.g. «для себя», «пмж») are FACTS, NOT objections!
+    if (localObj.category === 'motive_living' || localObj.category === 'motive_neutral') {
+      return {
+        type: 'fact',
+        category: localObj.category,
+        ruleId: localObj.ruleId,
+        text: localObj.text,
+        confidence: 0.9,
+      };
+    }
+
+    // Material requests or browsing clarifiers are clarifications/requests, NOT objections
+    if (
+      localObj.category === 'action_answer' ||
+      localObj.category === 'action_variants_video' ||
+      localObj.category === 'motive_browsing'
+    ) {
+      return {
+        type: 'clarification',
+        category: localObj.category,
+        ruleId: localObj.ruleId,
+        text: localObj.text,
+        confidence: 0.9,
+      };
+    }
+
+    // Real objection categories only (genuine client barriers/resistance)
+    const realObjectionCategories = new Set([
+      'objection_price',
+      'objection_timing',
+      'objection_security',
+      'objection_finance',
+      'objection_remote',
+      'objection_decision_maker',
+      'objection_compare',
+      'objection_channel',
+    ]);
+
+    if (realObjectionCategories.has(localObj.category) && !isFactUtterance) {
+      return {
+        type: 'objection',
+        category: localObj.category,
+        ruleId: localObj.ruleId,
+        text: localObj.text,
+        confidence: 0.9,
+      };
+    }
   }
 
-  // 4. Clarification / questions from client
+  // 5. Clarification / questions from client or document/variant requests
   if (
     clientText.includes('?') ||
     hasAnyPhrase(lower, [
@@ -707,6 +876,11 @@ export function classifyClientTurnIntent(
       'а есть ли',
       'подскажите по',
       'уточните',
+      'скиньте фото',
+      'пришлите варианты',
+      'скиньте варианты',
+      'проект договора',
+      'поэтажный план',
     ]) ||
     (lower.startsWith('а ') && lower.includes('?'))
   ) {
@@ -718,7 +892,7 @@ export function classifyClientTurnIntent(
     };
   }
 
-  // 5. Client preference / property requirements
+  // 6. Client preference / property requirements
   if (
     hasAnyPhrase(lower, [
       'нужен высокий этаж',
@@ -749,16 +923,13 @@ export function classifyClientTurnIntent(
     };
   }
 
-  // 6. Facts (budget, payment method, situation)
-  if (
-    hasAnyPhrase(lower, ['для себя', 'для отдыха', 'под сдачу', 'с семьей', 'живем в', 'продаем квартиру', 'наличные', 'в ипотеку']) ||
-    hasAnyWholeWord(lower, ['миллион', 'миллионов', 'млн', 'бюджет', 'ипотека', 'наличка'])
-  ) {
+  // 7. Facts (budget, payment method, situation, goal, timeline)
+  if (isFactUtterance) {
     return {
       type: 'fact',
       category: 'client_fact',
       text: clientText,
-      confidence: 0.85,
+      confidence: 0.9,
     };
   }
 

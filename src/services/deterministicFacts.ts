@@ -6,6 +6,7 @@
 
 import {
   hasWholeWord,
+  hasAnyWholeWord,
   hasPhrase,
   normalizeRussianText,
   validateEvidenceQuote,
@@ -24,8 +25,13 @@ export interface ExtractedFactItem {
   needsClarification?: boolean;
 }
 
-export function extractDeterministicFacts(text: string, turnId: string): ExtractedFactItem[] {
+export function extractDeterministicFacts(
+  text: string,
+  turnId: string,
+  previousAgentTurnText?: string | null
+): ExtractedFactItem[] {
   const trimmed = (text || '').trim();
+  const clean = trimmed.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim();
   if (!trimmed) return [];
 
   const lower = trimmed.toLowerCase();
@@ -182,6 +188,58 @@ export function extractDeterministicFacts(text: string, turnId: string): Extract
   const timelineMatch = lower.match(/(?:пара\s*месяцев|пару\s*месяцев|в\s*течение\s*пары\s*месяцев|2-3\s*месяца|к\s*лету|в\s*течение\s*месяца|срочно|не\s*к\s*спеху)/iu);
   if (timelineMatch) {
     addFact('timeline', 'purchaseTimeline', timelineMatch[0], timelineMatch[0]);
+  }
+
+  // 10. Criteria: Reliability / Transparency
+  if (lower.includes('надежност') || lower.includes('надёжност') || lower.includes('прозрачност')) {
+    const quote = lower.includes('надёжность')
+      ? 'надёжность'
+      : lower.includes('надежность')
+      ? 'надежность'
+      : 'прозрачность';
+    addFact('criteria', 'clientCriteria', 'Надёжность и прозрачность сделки', quote);
+  }
+
+  // 11. Contextual agreedNextStep (e.g. Agent: "Видеопоказ завтра в 15:00 удобно?" -> Client: "Да")
+  const isAffirmative = hasAnyWholeWord(clean, [
+    'да',
+    'хорошо',
+    'конечно',
+    'согласен',
+    'согласна',
+    'удобно',
+    'договорились',
+    'давайте',
+    'ок',
+    'окей',
+    'подходит',
+    'точно',
+  ]);
+
+  if (previousAgentTurnText) {
+    const prevLower = previousAgentTurnText.toLowerCase();
+    const hasNextStepProposal =
+      prevLower.includes('видеопоказ') ||
+      prevLower.includes('видео') ||
+      prevLower.includes('созвон') ||
+      prevLower.includes('зум') ||
+      prevLower.includes('показ') ||
+      (prevLower.includes('завтра') && prevLower.includes('удобно'));
+
+    if (isAffirmative && hasNextStepProposal) {
+      // Extract proposed step detail if present, or generate descriptive step
+      let stepValue = 'Видеопоказ';
+      if (prevLower.includes('видеопоказ завтра в 15:00') || (prevLower.includes('завтра') && prevLower.includes('15:00'))) {
+        stepValue = 'Видеопоказ завтра в 15:00';
+      } else if (prevLower.includes('видеопоказ') || prevLower.includes('видео')) {
+        stepValue = 'Видеопоказ вариантов';
+      } else if (prevLower.includes('созвон') || prevLower.includes('зум')) {
+        stepValue = 'Онлайн-созвон';
+      } else {
+        stepValue = 'Согласованный следующий шаг';
+      }
+      addFact('next_step', 'agreedNextStep', stepValue, trimmed);
+    }
   }
 
   return facts;

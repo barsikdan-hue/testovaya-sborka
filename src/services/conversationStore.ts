@@ -487,7 +487,9 @@ export function mergeFactsDelta(
         };
         break;
 
-      case 'criteria': {
+      case 'criteria':
+      case 'clientCriteria':
+      case 'client_criteria': {
         // Split comma-separated criteria items if multiple returned
         const rawItems = sanitizedVal
           .split(/[,;\n]+/)

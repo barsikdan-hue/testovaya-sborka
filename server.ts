@@ -1198,7 +1198,6 @@ async function start() {
 
     let geminiLiveSession: any = null;
     let isClosed = false;
-    let sessionResumptionToken: string | null = null;
     let reconnectAttempts = 0;
     const MAX_RECONNECTS = 3;
 
@@ -1240,6 +1239,7 @@ async function start() {
             onopen: () => {
               console.log(`[Live STT] Session opened for ${role}`);
               isLiveSessionReady = true;
+              reconnectAttempts = 0;
               flushPreConnectQueue();
               if (!isClosed && clientWs.readyState === WebSocket.OPEN) {
                 clientWs.send(JSON.stringify({
@@ -1278,10 +1278,6 @@ async function start() {
                   role,
                   activity: message.voiceActivity,
                 }));
-              }
-
-              if (message.sessionResumptionUpdate?.newHandle) {
-                sessionResumptionToken = message.sessionResumptionUpdate.newHandle;
               }
             },
             onclose: (event: any) => {
@@ -1334,8 +1330,6 @@ async function start() {
       }
     }
 
-    await initGeminiSession();
-
     clientWs.on('message', (data: any, isBinary: boolean) => {
       if (isClosed) return;
 
@@ -1376,6 +1370,10 @@ async function start() {
       } catch (err: any) {
         console.error(`[Live STT] Error sending audio chunk for ${role}:`, err.message);
       }
+    });
+
+    initGeminiSession().catch((e) => {
+      console.error(`[Live STT] initGeminiSession uncaught error for ${role}:`, e);
     });
 
     clientWs.on('close', async () => {

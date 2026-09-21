@@ -287,7 +287,16 @@ export function extractClientSpinMeaning(
     lower.includes('гарантия надежности') ||
     lower.includes('стабильный доход') ||
     lower.includes('чтобы у каждого было место') ||
-    lower.includes('чтобы всем хватало места')
+    lower.includes('чтобы всем хватало места') ||
+    lower.includes('именно это и нужно') ||
+    lower.includes('именно это нужно') ||
+    lower.includes('тогда буду спокоен') ||
+    lower.includes('буду спокоен') ||
+    lower.includes('будем спокойны') ||
+    lower.includes('это снимет риски') ||
+    lower.includes('это решит вопрос') ||
+    lower.includes('снимет риски') ||
+    lower.includes('тогда все риски сняты')
   ) {
     const painCat = detectRealEstatePainCategory(text);
     let meaning = 'Потребность в решении ключевой задачи проживания';
@@ -307,6 +316,9 @@ export function extractClientSpinMeaning(
 
   // 2. Implication (последствия: сон, здоровье, стресс, время, деньги, жизнь)
   if (
+    lower.includes('время/нервы') ||
+    lower.includes('финансовые риски') ||
+    (lower.includes('время') && (lower.includes('нерв') || lower.includes('риск'))) ||
     lower.includes('плохо сплю') ||
     lower.includes('не могу спать') ||
     lower.includes('не высыпаюсь') ||
@@ -338,6 +350,9 @@ export function extractClientSpinMeaning(
 
   // 3. Problem (боль, ограничение, неудобство)
   if (
+    lower.includes('надёжность') ||
+    lower.includes('надежность') ||
+    lower.includes('прозрачность') ||
     lower.includes('слишком шумно') ||
     lower.includes('очень шумно') ||
     lower.includes('шумное место') ||
