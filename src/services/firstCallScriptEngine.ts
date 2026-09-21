@@ -1072,7 +1072,43 @@ export function evaluateFirstCallScript(
   let pmValue = state.paymentMethod?.value || null;
   let pmReason: string | null = null;
 
-  if (allClientText.includes('ипотек') || allClientText.includes('кредит')) {
+  const mortgageNegationInClientText =
+    hasAnyPhrase(allClientText, [
+      'не нужна ипотека',
+      'ипотека не нужна',
+      'ипотека мне не нужна',
+      'ипотека нам не нужна',
+      'без ипотеки',
+      'не планирую ипотеку',
+      'не планируем ипотеку',
+      'не хочу ипотеку',
+      'не хотим ипотеку',
+      'не рассматриваю ипотеку',
+      'не рассматриваем ипотеку',
+      'ипотека не подходит',
+      'ипотекой раньше не пользовался, но сейчас',
+    ]) ||
+    (allClientText.includes('ипотек') && allClientText.includes('не нужн') && !allClientText.includes('хочу купить в ипотеку'));
+
+  const mortgageExplicitIntent =
+    allClientText.includes('в ипотеку') ||
+    allClientText.includes('под ипотеку') ||
+    allClientText.includes('хочу купить в ипотеку') ||
+    allClientText.includes('буду в ипотеку') ||
+    allClientText.includes('покупать буду в ипотеку') ||
+    allClientText.includes('купим в ипотеку') ||
+    allClientText.includes('через ипотеку') ||
+    allClientText.includes('ипотечное кредитование') ||
+    allClientText.includes('одобрен');
+
+  const cashInClientText =
+    allClientText.includes('наличн') ||
+    allClientText.includes('100%') ||
+    allClientText.includes('свои средства') ||
+    allClientText.includes('собственные средства') ||
+    allClientText.includes('без ипотеки');
+
+  if (mortgageExplicitIntent) {
     pmStatus = 'confirmed';
     pmValue = allClientText.includes('одобрен') ? 'Ипотека (есть одобрение банка)' : 'Ипотека';
     pmReason = 'Способ покупки подтверждён: ипотечное кредитование.';
@@ -1080,15 +1116,20 @@ export function evaluateFirstCallScript(
     pmStatus = 'confirmed';
     pmValue = 'Рассрочка от застройщика';
     pmReason = 'Способ покупки подтверждён: рассрочка.';
-  } else if (
-    allClientText.includes('наличн') ||
-    allClientText.includes('100%') ||
-    allClientText.includes('свои средства') ||
-    allClientText.includes('без ипотеки')
-  ) {
+  } else if (cashInClientText) {
     pmStatus = 'confirmed';
     pmValue = '100% собственные средства';
     pmReason = 'Способ покупки подтверждён: собственные средства без кредита.';
+  } else if (mortgageNegationInClientText) {
+    // Client explicitly stated they do NOT want/need mortgage.
+    // Do not set mortgage, and do not invent another payment method without explicit evidence.
+    pmStatus = 'not_confirmed';
+    pmValue = null;
+    pmReason = 'Клиент не планирует использовать ипотеку; иной способ оплаты пока не подтверждён.';
+  } else if ((allClientText.includes('ипотек') || allClientText.includes('кредит')) && !mortgageNegationInClientText) {
+    pmStatus = 'confirmed';
+    pmValue = 'Ипотека';
+    pmReason = 'Способ покупки подтверждён: ипотечное кредитование.';
   } else if (pmValue) {
     pmStatus = 'confirmed';
     pmReason = `Способ покупки зафиксирован: ${pmValue}`;
@@ -1439,7 +1480,17 @@ export function evaluateFirstCallScript(
     clientAgreed = true;
   } else {
     const lastText = lastClientTurn?.text?.toLowerCase() || '';
+    const hasRejection =
+      hasPhrase(lastText, 'да нет') ||
+      hasPhrase(lastText, 'не подходит') ||
+      hasPhrase(lastText, 'не удобно') ||
+      hasPhrase(lastText, 'не смогу') ||
+      hasPhrase(lastText, 'не нужно') ||
+      hasPhrase(lastText, 'не надо') ||
+      hasAnyWholeWord(lastText.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim(), ['нет', 'неудобно', 'нельзя']);
+
     if (
+      !hasRejection &&
       (lastText.includes('давайте') ||
         lastText.includes('удобно') ||
         lastText.includes('согласен') ||

@@ -128,15 +128,24 @@ export function extractDeterministicFacts(
   }
 
   // 4. Payment Method & Financing
-  const cashMatch = lower.match(/(?:наличн(?:ые|ыми|ых)|расчет\s*наличными|расчёт\s*наличными|100%\s*оплата|свои\s*средства)/iu);
-  const mortgageMatch = lower.match(/(?:ипотек(?:а|у|ой)|в\s*ипотеку)/iu);
+  const cashMatch = lower.match(/(?:наличн(?:ые|ыми|ых)|расчет\s*наличными|расчёт\s*наличными|100%\s*оплата|свои\s*средства|собственн(?:ые|ыми)\s*средств(?:а|ами))/iu);
+  const mortgageNegationMatch = lower.match(/(?:(?:не\s*(?:нужн(?:а|о)|планиру(?:ю|ем)|хот(?:им|ел|ела|ели)|буд(?:ем|у)|рассматрива(?:ем|ю)|подходит|интересует)|без)\s*ипотек(?:и|у)?|ипотек(?:а|у)?\s*(?:мне|нам|пока)?\s*не\s*(?:нужн(?:а|о)|интересн(?:а|о)|подходит)|ипотек(?:ой)?\s*(?:раньше\s*)?не\s*пользовал(?:ся|ись|ась))/iu);
+  const mortgageIntentMatch = lower.match(/(?:в\s*ипотеку|под\s*ипотеку|хочу\s*(?:в\s*)?ипотеку|буду\s*(?:в\s*)?ипотеку|купим\s*(?:в\s*)?ипотеку|планируем\s*(?:в\s*)?ипотеку|через\s*ипотеку|с\s*помощью\s*ипотеки|оформ(?:ить|ляем|им)\s*ипотеку|ипотек(?:а|у|ой)\s*(?:рассматрива(?:ем|ю)|подходит|нужна)|ипотечное\s*кредитование)/iu);
+  const genericMortgageMatch = lower.match(/(?:ипотек(?:а|у|ой)|в\s*ипотеку)/iu);
   const installmentMatch = lower.match(/(?:рассрочк(?:а|у|ой)|в\s*рассрочку)/iu);
-  if (mortgageMatch && installmentMatch) {
-    addFact('paymentMethod', 'paymentMethod', 'Ипотека / Рассрочка (допустимы оба варианта)', `${mortgageMatch[0]}, ${installmentMatch[0]}`);
-  } else if (cashMatch) {
+
+  // If client specifically intends mortgage (even if stating they haven't used it in the past), give precedence to explicit intent
+  if (mortgageIntentMatch && installmentMatch) {
+    addFact('paymentMethod', 'paymentMethod', 'Ипотека / Рассрочка (допустимы оба варианта)', `${mortgageIntentMatch[0]}, ${installmentMatch[0]}`);
+  } else if (cashMatch && (!genericMortgageMatch || mortgageNegationMatch)) {
     addFact('paymentMethod', 'paymentMethod', 'наличные', cashMatch[0]);
-  } else if (mortgageMatch) {
-    addFact('paymentMethod', 'paymentMethod', 'Ипотека', mortgageMatch[0]);
+  } else if (mortgageNegationMatch && !mortgageIntentMatch) {
+    // Negative preference regarding mortgage - do NOT choose mortgage as payment method
+    // Do NOT invent cash or installment unless client explicitly stated it
+  } else if (mortgageIntentMatch) {
+    addFact('paymentMethod', 'paymentMethod', 'Ипотека', mortgageIntentMatch[0]);
+  } else if (genericMortgageMatch && !mortgageNegationMatch) {
+    addFact('paymentMethod', 'paymentMethod', 'Ипотека', genericMortgageMatch[0]);
   } else if (installmentMatch) {
     addFact('paymentMethod', 'paymentMethod', 'Рассрочка', installmentMatch[0]);
   }
@@ -148,9 +157,39 @@ export function extractDeterministicFacts(
   }
 
   // 5. Family & Children (Family Mortgage eligibility check)
-  const childMatch = lower.match(/(?:реб[её]нк(?:у)?\s*\d+\s*(?:год(?:а)?|лет)|дет(?:и|ей)|маленьк(?:ие|их)\s*дет(?:и|ей)|сыну|дочери)/iu);
-  if (childMatch) {
-    addFact('finances', 'familyMortgage', 'Есть ребёнок подходящего возраста (требуется проверка условий программы)', childMatch[0]);
+  const noChildrenMatch = lower.match(/(?:(?:нет|нету|без)\s*детей|детей\s*(?:у\s*нас\s*)?(?:пока\s*)?нет|нет\s*реб[её]нка|без\s*реб[её]нка)/iu);
+  const childUnder7Match = lower.match(/(?:реб[её]нк(?:у)?\s*([1-6])\s*(?:год(?:а)?|лет)|до\s*7\s*лет|маленьк(?:ие|их)\s*дет(?:и|ей)|малыш|детский\s*сад)/iu);
+  const childGenericMatch = lower.match(/(?:реб[её]нок|реб[её]нка|реб[её]нку|дет(?:и|ей)|сыну|дочери|сын|дочь)/iu);
+
+  if (noChildrenMatch) {
+    // Explicit negative fact: children absent
+    addFact(
+      'familyMortgage',
+      'familyMortgage',
+      'Детей нет (семейная ипотека не применима)',
+      noChildrenMatch[0],
+      0.95,
+      { status: 'confirmed', needsClarification: false }
+    );
+  } else if (childUnder7Match) {
+    addFact(
+      'familyMortgage',
+      'familyMortgage',
+      'Есть ребёнок подходящего возраста (до 7 лет, подходит под условия семейной ипотеки)',
+      childUnder7Match[0],
+      0.95,
+      { status: 'confirmed', needsClarification: false }
+    );
+  } else if (childGenericMatch) {
+    // Children present but age unknown -> do NOT assert program eligibility without age check
+    addFact(
+      'familyMortgage',
+      'familyMortgage',
+      'Есть дети (возраст не уточнён, требуется проверка условий программы)',
+      childGenericMatch[0],
+      0.9,
+      { status: 'confirmed', needsClarification: true }
+    );
   }
 
   // 6. Employment (Requirement 5 & 8: Whole-word / phrase matching, "ипотека" != "ИП")
@@ -201,20 +240,32 @@ export function extractDeterministicFacts(
   }
 
   // 11. Contextual agreedNextStep (e.g. Agent: "Видеопоказ завтра в 15:00 удобно?" -> Client: "Да")
-  const isAffirmative = hasAnyWholeWord(clean, [
-    'да',
-    'хорошо',
-    'конечно',
-    'согласен',
-    'согласна',
-    'удобно',
-    'договорились',
-    'давайте',
-    'ок',
-    'окей',
-    'подходит',
-    'точно',
-  ]);
+  // Check if client explicitly rejects the proposed meeting/step (e.g. "да нет", "не подходит", "не удобно", "не смогу", "не надо", "нет")
+  const isNegativeNextStep =
+    hasAnyWholeWord(clean, ['нет', 'нельзя', 'неудобно']) ||
+    hasPhrase(lower, 'да нет') ||
+    hasPhrase(lower, 'не подходит') ||
+    hasPhrase(lower, 'не удобно') ||
+    hasPhrase(lower, 'не смогу') ||
+    hasPhrase(lower, 'не нужно') ||
+    hasPhrase(lower, 'не надо');
+
+  const isAffirmative =
+    !isNegativeNextStep &&
+    hasAnyWholeWord(clean, [
+      'да',
+      'хорошо',
+      'конечно',
+      'согласен',
+      'согласна',
+      'удобно',
+      'договорились',
+      'давайте',
+      'ок',
+      'окей',
+      'подходит',
+      'точно',
+    ]);
 
   if (previousAgentTurnText) {
     const prevLower = previousAgentTurnText.toLowerCase();
