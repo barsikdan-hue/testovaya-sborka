@@ -923,13 +923,30 @@ export function evaluateFirstCallScript(
     allClientText.includes('нет ребенка') ||
     allClientText.includes('нет ребёнка') ||
     allClientText.includes('детей пока нет') ||
-    allClientText.includes('детей у нас нет') ||
-    (allClientText.includes('не пользовал') && allClientText.includes('ипотек'));
+    allClientText.includes('детей у нас нет');
 
+  // Check state confirmedFacts for family mortgage / children facts
+  const famFact = state.confirmedFacts.find(
+    (f) => f.category === 'familyMortgage' || f.category === 'family_mortgage'
+  );
+
+  if (famFact && famFact.value) {
+    famStatus = famFact.status || 'confirmed';
+    famValue = famFact.value;
+    famReason = famFact.semanticReason || 'Статус семейной ипотеки зафиксирован из подтверждённых фактов диалога.';
+    famNeedsClarification = famFact.needsClarification ?? false;
+  } else if (state.familyMortgage?.value) {
+    famStatus = 'confirmed';
+    famValue = state.familyMortgage.value;
+    famReason = 'Семейная ипотека зафиксирована в состоянии диалога.';
+    famNeedsClarification = state.familyMortgage.needsClarification ?? false;
+  }
+
+  // If not already resolved from confirmed state, or if client text gives explicit new evidence:
   if (noChildrenMarkers) {
     famStatus = 'not_applicable';
     famValue = 'Детей нет (семейная ипотека не применима)';
-    famReason = 'Клиент сообщил об отсутствии детей или неприменимости семейной ипотеки.';
+    famReason = 'Клиент подтвердил отсутствие детей.';
     famNeedsClarification = false;
   } else if (adultChildrenMarkers && genericChildrenMarkers) {
     // Spec rule: Children exist, but NOT under 7 -> family mortgage does NOT apply by age!

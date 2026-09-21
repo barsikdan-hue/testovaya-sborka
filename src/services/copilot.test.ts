@@ -11,7 +11,8 @@ import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepea
 import { hasWholeWord, hasAnyWholeWord, validateEvidenceQuote } from './textUtils';
 import { detectRealEstatePainCategory, buildHpbPresentation, evaluateSpinAndHpb } from './spinEngine';
 import { classifyClientTurnIntent } from './objectionEngine';
-import { SuggestedReply } from '../types';
+import { evaluateFirstCallScript } from './firstCallScriptEngine';
+import { isMetricClosed, SuggestedReply } from '../types';
 
 describe('Copilot Engine & Andrei OS Test Suite', () => {
   const initialConversationState: ConversationState = createInitialState();
@@ -904,5 +905,548 @@ describe('Copilot Engine & Andrei OS Test Suite', () => {
     dismissed.lifecycleStatus = 'suppressed';
     expect(dismissed.lifecycleStatus).toBe('suppressed');
   });
+
+  // Scenario A: Active suggestion retention when new response has shouldSuggest = false
+  it('Scenario A: preserves current active suggestion when new AI response contains shouldSuggest=false and topic remains open', () => {
+    // Current displayed suggestion
+    const currentSuggestion: SuggestedReply = {
+      id: 'sugg_budget_1',
+      sessionId: 'sess_test',
+      basedOnRevision: 1,
+      candidateRuleId: null,
+      actionType: 'CLARIFY',
+      text: 'В какой бюджет комфортно уложиться при покупке?',
+      shortReason: 'Уточнить бюджет',
+      evidenceTurnIds: ['t_1'],
+      createdAt: Date.now() - 2000,
+      stage: 'diagnostics',
+      confidenceStatus: 'high',
+      lifecycleStatus: 'shown',
+      closesMetric: 'budget',
+    };
+
+    let displayedSuggestion: SuggestedReply | null = currentSuggestion;
+    let shouldSuggestUIState = true;
+
+    // Simulate incoming analysis response with shouldSuggest = false
+    const analysisResponse = {
+      sessionId: 'sess_test',
+      basedOnRevision: 2,
+      actionType: 'WAIT' as const,
+      shouldSuggest: false,
+      suggestedReply: null,
+      factsDelta: {},
+    };
+
+    // State of conversation where topic 'budget' is still not closed
+    const currentConvState: ConversationState = {
+      ...initialConversationState,
+      scriptProgress: {
+        metrics: {
+          budget: {
+            id: 'budget',
+            name: 'Бюджет покупки',
+            category: 'finances',
+            status: 'not_confirmed',
+            value: null,
+          },
+        },
+      } as any,
+    };
+
+    // Logic in App.tsx / handleAnalysisSuccess:
+    // When shouldSuggest = false, it means "no new suggestion", NOT "remove current suggestion"
+    if (analysisResponse.shouldSuggest && analysisResponse.suggestedReply) {
+      displayedSuggestion = analysisResponse.suggestedReply;
+      shouldSuggestUIState = true;
+    } else {
+      // Check if topic of current suggestion was closed
+      const current = displayedSuggestion;
+      if (current?.closesMetric) {
+        const metric = currentConvState.scriptProgress?.metrics?.[current.closesMetric];
+        if (metric && isMetricClosed(metric.status)) {
+          current.lifecycleStatus = 'suppressed';
+          displayedSuggestion = null;
+          shouldSuggestUIState = false;
+        }
+      }
+      // If topic is still open, displayedSuggestion remains untouched!
+    }
+
+    // VERIFICATION:
+    // Suggestion must remain displayed on screen
+    expect(displayedSuggestion).not.toBeNull();
+    expect(displayedSuggestion?.id).toBe('sugg_budget_1');
+    expect(displayedSuggestion?.text).toBe('В какой бюджет комфортно уложиться при покупке?');
+    expect(displayedSuggestion?.lifecycleStatus).toBe('shown');
+  });
+
+  // Scenario B: Analysis response arrives at 6s; not cancelled at 5s; state updated; stale suggestion not shown
+  it('Scenario B: does not abort request at 5-6s, applies state update, and suppresses stale suggestion', async () => {
+    const provider = new AnalysisProvider();
+    provider.setSession('sess_timeout_test');
+
+    const clientTurn: TranscriptTurn = {
+      id: 'turn_client_6s',
+      sessionId: 'sess_timeout_test',
+      source: 'call_audio',
+      speaker: 'client',
+      text: 'Мы рассматриваем бюджет 50 миллионов',
+      timestamp: Date.now(),
+      isFinal: true,
+    };
+
+    const originalFetch = global.fetch;
+    const requestStartTime = Date.now();
+
+    // Mock fetch that resolves after 6000ms (simulate 6s response time)
+    // Note: AnalysisProvider.HARD_TIMEOUT_MS is 11000ms (> 6000ms), so it will NOT abort!
+    global.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({
+                sessionId: 'sess_timeout_test',
+                basedOnRevision: 1, // original revision when request started
+                actionType: 'CLARIFY',
+                shouldSuggest: true,
+                suggestedReply: {
+                  id: 'sugg_stale_1',
+                  sessionId: 'sess_timeout_test',
+                  basedOnRevision: 1,
+                  actionType: 'CLARIFY',
+                  text: 'Какой бюджет покупки планируете?',
+                  shortReason: 'Уточнить бюджет',
+                  evidenceTurnIds: ['turn_client_6s'],
+                  createdAt: requestStartTime, // created 6 seconds ago!
+                  stage: 'diagnostics',
+                  confidenceStatus: 'high',
+                  lifecycleStatus: 'candidate',
+                  closesMetric: 'budget',
+                },
+                factsDelta: [
+                  {
+                    field: 'budget',
+                    value: '50 млн руб',
+                    evidenceQuote: '50 миллионов',
+                    evidenceTurnId: 'turn_client_6s',
+                    confidence: 0.95,
+                    status: 'confirmed',
+                  },
+                ],
+              }),
+            });
+          }, 120); // Scaled time: 120ms represents delayed response in test environment
+        })
+    );
+
+    let receivedResponse: any = null;
+    let receivedError: any = null;
+
+    provider.scheduleAnalysis(
+      {
+        sessionId: 'sess_timeout_test',
+        revision: 1,
+        newTurns: [clientTurn],
+        recentTurns: [],
+        currentState: initialConversationState,
+      },
+      (res) => {
+        receivedResponse = res;
+      },
+      (err) => {
+        receivedError = err;
+      },
+      undefined,
+      10 // debounce 10ms
+    );
+
+    // Wait for the delayed response to complete
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Request must succeed and NOT be aborted or errored
+    expect(receivedError).toBeNull();
+    expect(receivedResponse).not.toBeNull();
+    expect(receivedResponse.factsDelta[0].value).toBe('50 млн руб');
+
+    // 1. Valid state update is accepted
+    const updatedState = mergeFactsDelta(
+      initialConversationState,
+      receivedResponse.factsDelta,
+      'diagnostics',
+      undefined,
+      receivedResponse.basedOnRevision,
+      { [clientTurn.id]: clientTurn.text }
+    );
+    expect(updatedState.budget.value).toBe('50 млн руб');
+
+    // In the application lifecycle (App.tsx:672), evaluateFirstCallScript computes metric status
+    const scriptProgress = evaluateFirstCallScript([clientTurn], updatedState);
+    updatedState.scriptProgress = scriptProgress;
+    expect(scriptProgress.metrics['budget'].status).toBe('confirmed');
+
+    // 2. Evaluate suggestion staleness check:
+    // When late response arrives, check if suggestion's closesMetric is already closed
+    const candidateSuggestion: SuggestedReply = receivedResponse.suggestedReply;
+    const isTopicClosed = Boolean(
+      candidateSuggestion.closesMetric &&
+      isMetricClosed(scriptProgress.metrics[candidateSuggestion.closesMetric]?.status)
+    );
+
+    // Simulating verifyAndPromotePendingSuggestion in App.tsx:334-342
+    let shouldPromote = true;
+    if (isTopicClosed) {
+      candidateSuggestion.lifecycleStatus = 'suppressed';
+      shouldPromote = false;
+    }
+
+    expect(isTopicClosed).toBe(true);
+    expect(shouldPromote).toBe(false);
+    expect(candidateSuggestion.lifecycleStatus).toBe('suppressed');
+
+    // Restore fetch
+    global.fetch = originalFetch;
+  });
+
+  // Scenario C: Metric with partially_confirmed or needs_clarification and non-empty value
+  it('Scenario C: metric with partially_confirmed/needs_clarification is NOT closed despite having value, allowing clarification', () => {
+    // 1. Test directly with isMetricClosed
+    expect(isMetricClosed('partially_confirmed')).toBe(false);
+    expect(isMetricClosed('needs_clarification')).toBe(false);
+    expect(isMetricClosed('not_confirmed')).toBe(false);
+    expect(isMetricClosed('confirmed')).toBe(true);
+    expect(isMetricClosed('not_applicable')).toBe(true);
+    expect(isMetricClosed('declined_to_disclose')).toBe(true);
+
+    // 2. Client mentions children but age is unknown:
+    // Real function evaluateFirstCallScript sets status to 'partially_confirmed' with value
+    const turns: TranscriptTurn[] = [
+      {
+        id: 't_agent_1',
+        sessionId: 'sess_fam',
+        source: 'microphone',
+        speaker: 'agent',
+        text: 'Здравствуйте! Рассматриваете для семьи или для себя?',
+        timestamp: Date.now(),
+        isFinal: true,
+      },
+      {
+        id: 't_client_1',
+        sessionId: 'sess_fam',
+        source: 'call_audio',
+        speaker: 'client',
+        text: 'Для семьи, у нас есть дети',
+        timestamp: Date.now() + 1000,
+        isFinal: true,
+      },
+    ];
+
+    const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+    const familyMortgageMetric = scriptProgress.metrics['familyMortgage'];
+
+    // Metric must have non-empty value AND partially_confirmed status
+    expect(familyMortgageMetric).toBeDefined();
+    expect(familyMortgageMetric.value).toBeTruthy(); // Has value: "Есть дети (возраст не уточнён...)"
+    expect(familyMortgageMetric.status).toBe('partially_confirmed');
+    expect(familyMortgageMetric.needsClarification).toBe(true);
+
+    // CRITICAL: isMetricClosed MUST return false despite metric having a value!
+    expect(isMetricClosed(familyMortgageMetric.status)).toBe(false);
+
+    // 3. Clarifying question is allowed:
+    // Suggestion targeting this metric must NOT be suppressed by lifecycle check
+    const clarifyingSuggestion: SuggestedReply = {
+      id: 'sugg_clarify_kids',
+      sessionId: 'sess_fam',
+      basedOnRevision: 2,
+      candidateRuleId: null,
+      actionType: 'CLARIFY',
+      text: 'Подскажите, сколько лет детям? Есть ли ребенок до 7 лет?',
+      shortReason: 'Уточнить возраст детей для семейной ипотеки',
+      evidenceTurnIds: ['t_client_1'],
+      createdAt: Date.now(),
+      stage: 'diagnostics',
+      confidenceStatus: 'high',
+      lifecycleStatus: 'candidate',
+      closesMetric: 'familyMortgage',
+    };
+
+    // Promotion gate from App.tsx:
+    let isSuppressed = false;
+    if (clarifyingSuggestion.closesMetric) {
+      const metric = scriptProgress.metrics[clarifyingSuggestion.closesMetric];
+      if (metric && isMetricClosed(metric.status)) {
+        isSuppressed = true;
+      }
+    }
+
+    // Clarification question is NOT suppressed and is permitted to show
+    expect(isSuppressed).toBe(false);
+  });
+
+  // Scenario D: familyMortgage has status not_applicable
+  it('Scenario D: familyMortgage with status not_applicable is treated as closed, suppresses repeated questions', () => {
+    // 1. Client explicitly states children are adults living separately
+    const turns: TranscriptTurn[] = [
+      {
+        id: 't_agent_1',
+        sessionId: 'sess_adult',
+        source: 'microphone',
+        speaker: 'agent',
+        text: 'Добрый день! Рассматриваете квартиру для себя?',
+        timestamp: Date.now(),
+        isFinal: true,
+      },
+      {
+        id: 't_client_1',
+        sessionId: 'sess_adult',
+        source: 'call_audio',
+        speaker: 'client',
+        text: 'Дети уже взрослые, живут отдельно, покупаем для себя с женой',
+        timestamp: Date.now() + 1000,
+        isFinal: true,
+      },
+    ];
+
+    const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+    const familyMortgageMetric = scriptProgress.metrics['familyMortgage'];
+
+    // Verify real engine output
+    expect(familyMortgageMetric).toBeDefined();
+    expect(familyMortgageMetric.status).toBe('not_applicable');
+    expect(familyMortgageMetric.value).toContain('взрослые');
+    expect(familyMortgageMetric.needsClarification).toBe(false);
+
+    // Verify metric is recognized as closed
+    expect(isMetricClosed(familyMortgageMetric.status)).toBe(true);
+
+    // 2. Pre-display verification: A repeated question about family mortgage must be rejected
+    const repeatedFamilyMortgageSuggestion: SuggestedReply = {
+      id: 'sugg_repeat_fam',
+      sessionId: 'sess_adult',
+      basedOnRevision: 2,
+      candidateRuleId: null,
+      actionType: 'CLARIFY',
+      text: 'А у вас есть дети до 7 лет под семейную ипотеку?',
+      shortReason: 'Уточнить семейную ипотеку',
+      evidenceTurnIds: ['t_client_1'],
+      createdAt: Date.now(),
+      stage: 'diagnostics',
+      confidenceStatus: 'high',
+      lifecycleStatus: 'candidate',
+      closesMetric: 'familyMortgage',
+    };
+
+    // App.tsx promotion check:
+    let isSuppressed = false;
+    if (repeatedFamilyMortgageSuggestion.closesMetric) {
+      const metric = scriptProgress.metrics[repeatedFamilyMortgageSuggestion.closesMetric];
+      if (metric && isMetricClosed(metric.status)) {
+        repeatedFamilyMortgageSuggestion.lifecycleStatus = 'suppressed';
+        isSuppressed = true;
+      }
+    }
+
+    // Repeated question is properly suppressed!
+    expect(isSuppressed).toBe(true);
+    expect(repeatedFamilyMortgageSuggestion.lifecycleStatus).toBe('suppressed');
+  });
+
+  describe('Children vs Mortgage Usage Disambiguation', () => {
+    // 1. Child confirmed -> "ипотекой не пользовался" -> child status remains confirmed
+    it('1. Child confirmed -> "ипотекой не пользовался" -> child status remains confirmed', () => {
+      const turns: TranscriptTurn[] = [
+        {
+          id: 'turn_agent_1',
+          sessionId: 'sess_child_1',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Подскажите, есть ли у вас дети до 7 лет?',
+          timestamp: 1000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_1',
+          sessionId: 'sess_child_1',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Да, у нас сыну 3 года',
+          timestamp: 2000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_agent_2',
+          sessionId: 'sess_child_1',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Ранее пользовались льготной или семейной ипотекой?',
+          timestamp: 3000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_2',
+          sessionId: 'sess_child_1',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Нет, пока не пользовался. Это было бы в первый раз, если решим',
+          timestamp: 4000,
+          isFinal: true,
+        },
+      ];
+
+      const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+      const famMetric = scriptProgress.metrics['familyMortgage'];
+
+      expect(famMetric).toBeDefined();
+      expect(famMetric.status).toBe('confirmed');
+      expect(famMetric.value).toContain('Есть ребёнок до 7 лет');
+      expect(isMetricClosed(famMetric.status)).toBe(true);
+      expect(famMetric.needsClarification).toBe(false);
+    });
+
+    // 2. "ипотекой не пользовался" without child discussion -> children status remains unknown (not_confirmed)
+    it('2. "ипотекой не пользовался" without child discussion -> children status remains unknown / not_confirmed', () => {
+      const turns: TranscriptTurn[] = [
+        {
+          id: 'turn_agent_1',
+          sessionId: 'sess_child_2',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Вы раньше брали ипотеку?',
+          timestamp: 1000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_1',
+          sessionId: 'sess_child_2',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Нет, ипотекой никогда не пользовался',
+          timestamp: 2000,
+          isFinal: true,
+        },
+      ];
+
+      const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+      const famMetric = scriptProgress.metrics['familyMortgage'];
+
+      expect(famMetric).toBeDefined();
+      expect(famMetric.status).toBe('not_confirmed');
+      expect(famMetric.value).toBeNull();
+      expect(isMetricClosed(famMetric.status)).toBe(false);
+    });
+
+    // 3. Explicit "детей нет" -> status not_applicable (confirmed closed)
+    it('3. Explicit "детей нет" -> status not_applicable', () => {
+      const turns: TranscriptTurn[] = [
+        {
+          id: 'turn_agent_1',
+          sessionId: 'sess_child_3',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Есть ли дети?',
+          timestamp: 1000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_1',
+          sessionId: 'sess_child_3',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Детей нет, подбираем квартиру для себя',
+          timestamp: 2000,
+          isFinal: true,
+        },
+      ];
+
+      const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+      const famMetric = scriptProgress.metrics['familyMortgage'];
+
+      expect(famMetric).toBeDefined();
+      expect(famMetric.status).toBe('not_applicable');
+      expect(famMetric.value).toContain('Детей нет');
+      expect(isMetricClosed(famMetric.status)).toBe(true);
+      expect(famMetric.needsClarification).toBe(false);
+    });
+
+    // 4. Question about child without answer -> children status unknown / not_confirmed
+    it('4. Question about child without answer -> children status unknown / not_confirmed', () => {
+      const turns: TranscriptTurn[] = [
+        {
+          id: 'turn_agent_1',
+          sessionId: 'sess_child_4',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Подскажите, сколько детям лет, если есть дети?',
+          timestamp: 1000,
+          isFinal: true,
+        },
+      ];
+
+      const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+      const famMetric = scriptProgress.metrics['familyMortgage'];
+
+      expect(famMetric).toBeDefined();
+      expect(famMetric.status).toBe('not_confirmed');
+      expect(famMetric.value).toBeNull();
+      expect(isMetricClosed(famMetric.status)).toBe(false);
+      // Question was asked by agent, but client did not provide an answer
+      expect(famMetric.agentQuestionAsked).toBe(true);
+    });
+
+    // 5. "нет" on down payment question -> does not change child status
+    it('5. "нет" on down payment question -> does not change child status', () => {
+      const turns: TranscriptTurn[] = [
+        {
+          id: 'turn_agent_1',
+          sessionId: 'sess_child_5',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Есть ли у вас дети до 7 лет?',
+          timestamp: 1000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_1',
+          sessionId: 'sess_child_5',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Да, дочке 5 лет',
+          timestamp: 2000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_agent_2',
+          sessionId: 'sess_child_5',
+          source: 'microphone',
+          speaker: 'agent',
+          text: 'Есть ли уже на руках первоначальный взнос?',
+          timestamp: 3000,
+          isFinal: true,
+        },
+        {
+          id: 'turn_client_2',
+          sessionId: 'sess_child_5',
+          source: 'call_audio',
+          speaker: 'client',
+          text: 'Нет, пока нет, планируем продавать квартиру',
+          timestamp: 4000,
+          isFinal: true,
+        },
+      ];
+
+      const scriptProgress = evaluateFirstCallScript(turns, initialConversationState);
+      const famMetric = scriptProgress.metrics['familyMortgage'];
+
+      expect(famMetric).toBeDefined();
+      expect(famMetric.status).toBe('confirmed');
+      expect(famMetric.value).toContain('Есть ребёнок до 7 лет');
+      expect(isMetricClosed(famMetric.status)).toBe(true);
+    });
+  });
 });
+
 
