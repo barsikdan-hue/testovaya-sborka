@@ -42,7 +42,17 @@ export class AnalysisProvider {
   private lastAnalysisTimestamp: number = 0;
   private lastValidResponse: AnalysisResponse | null = null;
 
+  // Constants
+  public static readonly HARD_TIMEOUT_MS: number = 11000; // 10000-12000ms safety limit
+  public static readonly SOFT_THRESHOLD_MS: number = 1200; // 1200ms soft indicator
+
   // Diagnostics counters
+  private analysisRequests: number = 0;
+  private analysisSuccess: number = 0;
+  private analysisHardTimeouts: number = 0;
+  private analysisSessionCancels: number = 0;
+  private analysisErrors: number = 0;
+
   private totalAnalysisRequestsCount: number = 0;
   private cancelledRequestsCount: number = 0;
   private rejectedRequestsCount: number = 0;
@@ -69,6 +79,14 @@ export class AnalysisProvider {
     this.lastValidResponse = null;
     this.lastRequestTimestamp = null;
     this.lastRequestReason = null;
+    this.analysisRequests = 0;
+    this.analysisSuccess = 0;
+    this.analysisHardTimeouts = 0;
+    this.analysisSessionCancels = 0;
+    this.analysisErrors = 0;
+    this.totalAnalysisRequestsCount = 0;
+    this.cancelledRequestsCount = 0;
+    this.rejectedRequestsCount = 0;
   }
 
   public getMemoryBacklog(): TranscriptTurn[] {
@@ -89,8 +107,13 @@ export class AnalysisProvider {
 
   public getStats() {
     return {
-      requestsCount: this.totalAnalysisRequestsCount,
-      cancelledCount: this.cancelledRequestsCount,
+      analysisRequests: this.analysisRequests,
+      analysisSuccess: this.analysisSuccess,
+      analysisHardTimeouts: this.analysisHardTimeouts,
+      analysisSessionCancels: this.analysisSessionCancels,
+      analysisErrors: this.analysisErrors,
+      requestsCount: this.analysisRequests,
+      cancelledCount: this.analysisSessionCancels,
       rejectedCount: this.rejectedRequestsCount,
       lastRejectedReason: this.lastRejectedReason,
       lastRequestTime: this.lastRequestTimestamp,
@@ -249,6 +272,7 @@ export class AnalysisProvider {
     this.lastRequestReason =
       payload.reason || (targetTurn ? `Клиент: "${targetTurn.text.slice(0, 35)}..."` : 'Анализ контекста');
     this.totalAnalysisRequestsCount++;
+    this.analysisRequests++;
 
     // Create abort controller for this specific request (ONLY for hard timeout or cancelPending)
     this.activeAbortController = new AbortController();
@@ -259,21 +283,21 @@ export class AnalysisProvider {
     // Soft threshold: after 1200ms show "Уточняю контекст..." without aborting
     this.softThresholdTimer = setTimeout(() => {
       onRefiningChange?.(true);
-    }, 1200);
+    }, AnalysisProvider.SOFT_THRESHOLD_MS);
 
-    // Hard network timeout: 5000ms safety limit
+    // Hard network timeout: 10000-12000ms safety limit (11000ms)
     let isHardTimedOut = false;
     this.hardTimeoutTimer = setTimeout(() => {
       isHardTimedOut = true;
+      this.analysisHardTimeouts++;
       if (this.activeAbortController) {
         try {
           this.activeAbortController.abort();
-          this.cancelledRequestsCount++;
         } catch (e) {
           // ignore
         }
       }
-    }, 5000);
+    }, AnalysisProvider.HARD_TIMEOUT_MS);
 
     try {
       const response = await fetch('/api/analyze', {
@@ -310,6 +334,7 @@ export class AnalysisProvider {
       this.analyzedRevisions.add(payload.revision);
 
       this.lastValidResponse = data;
+      this.analysisSuccess++;
       onRefiningChange?.(false);
       onSuccess(data);
     } catch (err: any) {
@@ -317,12 +342,13 @@ export class AnalysisProvider {
       if (err.name === 'AbortError') {
         if (isHardTimedOut) {
           console.warn(
-            `[AnalysisProvider] Analysis hard timed out at 5000ms for rev ${reqRevision}. Preserving current suggestion.`
+            `[AnalysisProvider] Analysis hard timed out at ${AnalysisProvider.HARD_TIMEOUT_MS}ms for rev ${reqRevision}. Preserving current suggestion.`
           );
           onError({ isTimeout: true, message: 'Время ответа Gemini превышено, карточка сохранена' });
         }
         return;
       }
+      this.analysisErrors++;
       console.error('Analysis execution failed:', err);
       onError(err);
     } finally {
@@ -395,6 +421,7 @@ export class AnalysisProvider {
       try {
         this.activeAbortController.abort();
         this.cancelledRequestsCount++;
+        this.analysisSessionCancels++;
       } catch (e) {
         // ignore
       }

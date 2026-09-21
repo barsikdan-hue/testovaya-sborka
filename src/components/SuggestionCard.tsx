@@ -129,7 +129,7 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({
   };
 
   const canShowSuggestion =
-    isCallRunning && !isPaused && !hasAnalysisError && !isCompleted && shouldSuggest && Boolean(suggestion?.text);
+    isCallRunning && !isPaused && !isCompleted && shouldSuggest && Boolean(suggestion?.text);
   const actionBadge = getActionTypeBadge(suggestion?.actionType);
   const modeBadge = getSuggestionModeBadge(suggestion?.suggestionMode);
 

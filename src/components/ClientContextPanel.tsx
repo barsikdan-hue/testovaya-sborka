@@ -19,7 +19,7 @@ import {
   Video,
   FileText,
 } from 'lucide-react';
-import { ConversationState, FactEntry, FirstCallMetric } from '../types';
+import { ConversationState, FactEntry, FirstCallMetric, isMetricClosed } from '../types';
 import { FIRST_CALL_METRICS_LIST } from '../services/firstCallScriptEngine';
 import { getCategoryLabel, getMetricLabel, getObjectionLabel, isRealObjection } from '../utils/labels';
 
@@ -65,21 +65,30 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
     icon: React.ReactNode,
     suggestedQuestion: string
   ) => {
-    const isSpecified = Boolean(fact?.value);
+    const isClosed = isMetricClosed(fact?.status);
+    const isNotApplicable = fact?.status === 'not_applicable';
+    const isSpecified = Boolean(fact?.value) || isClosed;
 
     return (
       <div className="flex items-center justify-between p-2 rounded-lg bg-stone-50/70 border border-stone-100 hover:border-stone-200 transition-colors">
         <div className="flex items-center space-x-2 min-w-0 pr-2">
           <div className="text-stone-500 shrink-0">{icon}</div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[11px] font-medium text-stone-500 leading-none mb-0.5">{label}</span>
+            <div className="flex items-center space-x-1.5 mb-0.5">
+              <span className="text-[11px] font-medium text-stone-500 leading-none">{label}</span>
+              {isNotApplicable && (
+                <span className="bg-stone-100 text-stone-700 text-[9px] px-1 py-0.2 rounded font-medium shrink-0">
+                  ✓ Не применимо
+                </span>
+              )}
+            </div>
             <span
               className={`text-xs truncate ${
                 isSpecified ? 'font-semibold text-stone-900' : 'text-stone-400 italic'
               }`}
-              title={fact?.value || 'Не подтверждено — уточнить'}
+              title={fact?.value || (isNotApplicable ? 'Не применимо' : 'Не подтверждено — уточнить')}
             >
-              {fact?.value || 'Не подтверждено — уточнить'}
+              {fact?.value || (isNotApplicable ? 'Не применимо' : 'Не подтверждено — уточнить')}
             </span>
           </div>
         </div>
@@ -95,7 +104,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
             </button>
           )}
 
-          {!isSpecified && onAskField && (
+          {!isSpecified && !isClosed && !isNotApplicable && onAskField && (
             <button
               onClick={() => onAskField(suggestedQuestion)}
               className="text-[10px] text-teal-700 hover:text-teal-900 font-medium px-1.5 py-0.5 rounded hover:bg-teal-50 transition-colors cursor-pointer"
@@ -158,7 +167,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
           >
             <span>Скрипт</span>
             <span className="bg-teal-100 text-teal-800 text-[9px] px-1 rounded-full font-mono">
-              {metrics.filter((m) => m.status === 'confirmed').length}/18
+              {metrics.filter((m) => isMetricClosed(m.status)).length}/18
             </span>
           </button>
           <button
@@ -242,7 +251,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                 <div className="flex justify-between text-[11px] text-stone-600 mb-1">
                   <span>Ядро скрипта: {quality?.passedCoreCriteriaCount ?? 0} / 12 (порог: 7)</span>
                   <span className="font-semibold text-stone-800">
-                    Всего раскрыто: {metrics.filter((m) => m.status === 'confirmed').length} / 18
+                    Всего раскрыто: {metrics.filter((m) => isMetricClosed(m.status)).length} / 18
                   </span>
                 </div>
                 <div className="w-full bg-stone-200 h-1.5 rounded-full overflow-hidden">
@@ -301,7 +310,9 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
               </div>
 
               {metrics.map((metric) => {
+                const isClosed = isMetricClosed(metric.status);
                 const isConfirmed = metric.status === 'confirmed';
+                const isNotApplicable = metric.status === 'not_applicable';
                 const isPartial = metric.status === 'partially_confirmed' || metric.status === 'needs_clarification';
                 const suggestedQ = SCRIPT_METRIC_QUESTIONS[metric.id];
 
@@ -309,7 +320,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                   <div
                     key={metric.id}
                     className={`p-2 rounded-lg border transition-colors ${
-                      isConfirmed
+                      isClosed
                         ? 'bg-emerald-50/40 border-emerald-200'
                         : isPartial
                         ? 'bg-amber-50/40 border-amber-200'
@@ -318,7 +329,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                   >
                     <div className="flex items-center justify-between gap-1.5">
                       <div className="flex items-center space-x-1.5 min-w-0">
-                        {isConfirmed ? (
+                        {isClosed ? (
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                         ) : isPartial ? (
                           <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -330,6 +341,12 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                           {metric.priorityOrder ? `${metric.priorityOrder}. ` : ''}{metric.name}
                         </span>
 
+                        {isNotApplicable && (
+                          <span className="bg-stone-100 text-stone-700 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 flex items-center gap-1">
+                            ✓ Не применимо
+                          </span>
+                        )}
+
                         {metric.isCoreCriteria && (
                           <span className="bg-amber-100 text-amber-900 text-[9px] px-1 py-0.2 rounded font-semibold shrink-0">
                             ★ Ядро
@@ -338,7 +355,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                       </div>
 
                       <div className="shrink-0 flex items-center space-x-1">
-                        {isConfirmed && metric.evidenceTurnId && (
+                        {isClosed && metric.evidenceTurnId && (
                           <button
                             onClick={() => onTurnClick?.([metric.evidenceTurnId!])}
                             className="text-[10px] text-teal-700 hover:underline font-mono px-1 py-0.2 rounded bg-teal-50"
@@ -348,7 +365,7 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                           </button>
                         )}
 
-                        {!isConfirmed && suggestedQ && onAskField && (
+                        {!isClosed && !isNotApplicable && suggestedQ && onAskField && (
                           <button
                             onClick={() => onAskField(suggestedQ)}
                             className="text-[10px] text-teal-700 hover:text-teal-900 font-medium px-1.5 py-0.5 rounded hover:bg-teal-50 transition-colors cursor-pointer"
@@ -368,6 +385,10 @@ export const ClientContextPanel: React.FC<ClientContextPanelProps> = ({
                             «{metric.evidenceQuote}»
                           </span>
                         )}
+                      </div>
+                    ) : isNotApplicable ? (
+                      <div className="mt-0.5 text-[10px] text-stone-500 font-medium pl-5">
+                        ✓ Не применимо
                       </div>
                     ) : (
                       <div className="mt-0.5 text-[10px] text-stone-400 italic pl-5">

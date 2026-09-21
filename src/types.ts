@@ -86,7 +86,21 @@ export type MetricStatus =
   | 'needs_clarification'
   | 'not_confirmed'
   | 'missing'
-  | 'not_applicable';
+  | 'not_applicable'
+  | 'declined_to_disclose';
+
+/**
+ * Checks if a metric is considered closed/satisfied:
+ * - confirmed: fact confirmed
+ * - not_applicable: fact not applicable (e.g. no children under 7 for family mortgage)
+ * - declined_to_disclose: client explicitly refused to disclose
+ * Returns false for partially_confirmed, needs_clarification, not_confirmed, missing.
+ */
+export function isMetricClosed(status: MetricStatus | string | null | undefined): boolean {
+  if (!status) return false;
+  const s = String(status).toLowerCase();
+  return s === 'confirmed' || s === 'not_applicable' || s === 'declined_to_disclose';
+}
 
 export interface FirstCallMetric {
   id: string;
@@ -578,6 +592,11 @@ export interface DiagnosticsData {
   analysisLatencyMs: number | null;
   liveSttSessionsCount: number;
   cancelledRequestsCount: number;
+  analysisRequests?: number;
+  analysisSuccess?: number;
+  analysisHardTimeouts?: number;
+  analysisSessionCancels?: number;
+  analysisErrors?: number;
   lastRequestTime: number | null;
   lastRequestReason: string | null;
 }

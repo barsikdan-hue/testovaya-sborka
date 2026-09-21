@@ -2,6 +2,7 @@ import {
   ConversationState,
   FirstCallMetric,
   FirstCallScriptProgress,
+  isMetricClosed,
   MetricStatus,
   PpiEvaluation,
   PpvEvaluation,
@@ -10,6 +11,8 @@ import {
   TranscriptTurn,
   TrustEvaluation,
 } from '../types';
+
+export { isMetricClosed };
 import { isSubstantiveClientTurn } from './objectionEngine';
 import { checkSemanticAntiRepeat, extractSemanticKey } from './semanticAntiRepeat';
 import {
@@ -915,9 +918,20 @@ export function evaluateFirstCallScript(
 
   const noChildrenMarkers =
     allClientText.includes('детей нет') ||
-    allClientText.includes('без детей');
+    allClientText.includes('нет детей') ||
+    allClientText.includes('без детей') ||
+    allClientText.includes('нет ребенка') ||
+    allClientText.includes('нет ребёнка') ||
+    allClientText.includes('детей пока нет') ||
+    allClientText.includes('детей у нас нет') ||
+    (allClientText.includes('не пользовал') && allClientText.includes('ипотек'));
 
-  if (adultChildrenMarkers && genericChildrenMarkers) {
+  if (noChildrenMarkers) {
+    famStatus = 'not_applicable';
+    famValue = 'Детей нет (семейная ипотека не применима)';
+    famReason = 'Клиент сообщил об отсутствии детей или неприменимости семейной ипотеки.';
+    famNeedsClarification = false;
+  } else if (adultChildrenMarkers && genericChildrenMarkers) {
     // Spec rule: Children exist, but NOT under 7 -> family mortgage does NOT apply by age!
     // Do NOT say "no kids"! Do NOT ask again! Status = not_applicable!
     famStatus = 'not_applicable';
@@ -934,11 +948,6 @@ export function evaluateFirstCallScript(
     famValue = 'Есть дети (возраст не уточнён — проверить, есть ли до 7 лет)';
     famReason = 'Наличие детей озвучено, но возраст неизвестен: требуется уточнить, есть ли дети до 7 лет.';
     famNeedsClarification = true;
-  } else if (noChildrenMarkers) {
-    famStatus = 'not_applicable';
-    famValue = 'Детей нет (семейная ипотека не применима)';
-    famReason = 'Клиент сообщил об отсутствии детей.';
-    famNeedsClarification = false;
   }
 
   metrics['familyMortgage'] = {
@@ -1464,7 +1473,7 @@ export function evaluateFirstCallScript(
 
   for (const cid of CORE_12_CRITERIA_IDS) {
     const m = metrics[cid];
-    if (m && (m.status === 'confirmed' || m.status === 'not_applicable' || (m.status === 'partially_confirmed' && cid === 'urgency' && m.value))) {
+    if (m && (isMetricClosed(m.status) || (m.status === 'partially_confirmed' && cid === 'urgency' && m.value))) {
       passedCoreCriteriaCount += 1;
     }
   }
@@ -1507,15 +1516,15 @@ export function evaluateFirstCallScript(
     immediatePriorityMetric = 'criteria';
     immediatePriorityHint = 'Показать последствия проблемы: потери времени, упущенная выгода или риски';
     nextScriptStep = 'SPIN: Последствия';
-  } else if (metrics['goal'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['goal'].status)) {
     immediatePriorityMetric = 'goal';
     immediatePriorityHint = 'Разграничить отдых, ПМЖ или инвестиции без домыслов';
     nextScriptStep = 'Исследование клиента (Goal)';
-  } else if (metrics['propertyType'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['propertyType'].status)) {
     immediatePriorityMetric = 'propertyType';
     immediatePriorityHint = 'Квартира, апартаменты или загородный дом';
     nextScriptStep = 'Исследование клиента (Формат)';
-  } else if (metrics['location'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['location'].status)) {
     immediatePriorityMetric = 'location';
     immediatePriorityHint = 'Какие районы Сочи или побережья приоритетны';
     nextScriptStep = 'Исследование клиента (Локация)';
@@ -1523,31 +1532,31 @@ export function evaluateFirstCallScript(
     immediatePriorityMetric = 'trust';
     immediatePriorityHint = 'Укрепить доверие: задать естественный открытый личный вопрос';
     nextScriptStep = 'Укрепление доверия';
-  } else if (metrics['downPayment'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['downPayment'].status)) {
     immediatePriorityMetric = 'downPayment';
     immediatePriorityHint = 'Какой комфортный первоначальный взнос';
     nextScriptStep = 'Финансовая квалификация (ПВ)';
-  } else if (metrics['downPaymentSource'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['downPaymentSource'].status)) {
     immediatePriorityMetric = 'downPaymentSource';
     immediatePriorityHint = 'Средства на руках, вклад или продажа текущего жилья';
     nextScriptStep = 'Финансовая квалификация (Источник ПВ)';
-  } else if (metrics['paymentMethod'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['paymentMethod'].status)) {
     immediatePriorityMetric = 'paymentMethod';
     immediatePriorityHint = 'Ипотека, рассрочка или собственные средства';
     nextScriptStep = 'Финансовая квалификация (Способ)';
-  } else if (metrics['budget'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['budget'].status)) {
     immediatePriorityMetric = 'budget';
     immediatePriorityHint = 'До какой максимальной суммы рассматривает клиент';
     nextScriptStep = 'Финансовая квалификация (Бюджет)';
-  } else if (metrics['decisionMaker'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['decisionMaker'].status)) {
     immediatePriorityMetric = 'decisionMaker';
     immediatePriorityHint = 'Кто ещё участвует в выборе и распоряжается бюджетом';
     nextScriptStep = 'Проверка ЛПР';
-  } else if (metrics['ppi'].status !== 'confirmed' && metrics['paymentMethod'].value?.toLowerCase().includes('ипотек')) {
+  } else if (!isMetricClosed(metrics['ppi'].status) && metrics['paymentMethod'].value?.toLowerCase().includes('ипотек')) {
     immediatePriorityMetric = 'ppi';
     immediatePriorityHint = 'Озвучить 3 возможности и предложить эксперта по ипотеке';
     nextScriptStep = 'ППИ';
-  } else if (metrics['ppv'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['ppv'].status)) {
     immediatePriorityMetric = 'ppv';
     immediatePriorityHint = 'Предложить 15-минутный онлайн-показ со специалистом застройщика на выбор: сегодня или завтра';
     nextScriptStep = 'Вывод на видеопоказ (ППВ)';
@@ -1561,19 +1570,19 @@ export function evaluateFirstCallScript(
   let routeStage: FirstCallScriptProgress['routeStage'] = 'client_research';
   if (turns.length <= 2) {
     routeStage = 'greeting';
-  } else if (metrics['goal'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['goal'].status)) {
     routeStage = 'client_research';
   } else if (state.spin?.currentStage !== 'NEED_PAYOFF' && state.spin?.completedStages?.length < 3) {
     routeStage = 'spin';
-  } else if (metrics['budget'].status !== 'confirmed' || metrics['downPayment'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['budget'].status) || !isMetricClosed(metrics['downPayment'].status)) {
     routeStage = 'financial_qualification';
-  } else if (metrics['decisionMaker'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['decisionMaker'].status)) {
     routeStage = 'lpr_check';
   } else if (state.objections?.items && state.objections.items.length > 0) {
     routeStage = 'objections';
-  } else if (metrics['ppi'].status !== 'confirmed' && metrics['paymentMethod'].value?.toLowerCase().includes('ипотек')) {
+  } else if (!isMetricClosed(metrics['ppi'].status) && metrics['paymentMethod'].value?.toLowerCase().includes('ипотек')) {
     routeStage = 'ppi';
-  } else if (metrics['ppv'].status !== 'confirmed') {
+  } else if (!isMetricClosed(metrics['ppv'].status)) {
     routeStage = 'ppv';
   } else {
     routeStage = 'next_step';
@@ -1644,7 +1653,7 @@ export function getFirstCallSuggestion(
         lastClientText.includes('для себя') &&
         !lastClientText.includes('переезд') &&
         !lastClientText.includes('отдых') &&
-        progress.metrics['goal']?.status !== 'confirmed',
+        !isMetricClosed(progress.metrics['goal']?.status),
     },
     // 2. Client condition: need to sell flat first
     {
@@ -1659,7 +1668,7 @@ export function getFirstCallSuggestion(
         (lastClientText.includes('сначала продам') ||
           lastClientText.includes('нужно продать') ||
           lastClientText.includes('продаем свою')) &&
-        progress.metrics['downPaymentSource']?.status !== 'confirmed',
+        !isMetricClosed(progress.metrics['downPaymentSource']?.status),
     },
     // 3. Client objection: "Пришлите фото"
     {
@@ -1674,7 +1683,7 @@ export function getFirstCallSuggestion(
         (lastClientText.includes('пришлите фото') ||
           lastClientText.includes('скиньте фото') ||
           lastClientText.includes('отправьте фото')) &&
-        progress.metrics['ppv']?.status !== 'confirmed',
+        !isMetricClosed(progress.metrics['ppv']?.status),
     },
     // 4. Missing Decision Maker (only if not already disclosed!)
     {
@@ -1686,8 +1695,8 @@ export function getFirstCallSuggestion(
       recognizedMeaning: 'Участники принятия решения пока не зафиксированы.',
       expectedClientMeaning: 'Клиент называет супруга, семью или подтверждает единоличное решение.',
       condition: () =>
-        progress.metrics['decisionMaker']?.status === 'not_confirmed' &&
-        progress.metrics['goal']?.status === 'confirmed',
+        !isMetricClosed(progress.metrics['decisionMaker']?.status) &&
+        isMetricClosed(progress.metrics['goal']?.status),
     },
     // 5. Missing Down payment source
     {
@@ -1699,8 +1708,8 @@ export function getFirstCallSuggestion(
       recognizedMeaning: 'Сумма первого взноса названа, но источник её получения не подтверждён.',
       expectedClientMeaning: 'Клиент подтверждает наличие средств либо называет источник финансирования.',
       condition: () =>
-        progress.metrics['downPaymentSource']?.status === 'not_confirmed' &&
-        progress.metrics['downPayment']?.status === 'confirmed',
+        !isMetricClosed(progress.metrics['downPaymentSource']?.status) &&
+        isMetricClosed(progress.metrics['downPayment']?.status),
     },
     // 6. Propose PPV (Video Presentation)
     {
@@ -1712,8 +1721,8 @@ export function getFirstCallSuggestion(
       recognizedMeaning: 'Потребность выявлена, требуется перевод диалога в целевой следующий шаг (видеопоказ).',
       expectedClientMeaning: 'Клиент выбирает удобный слот для короткого видеопоказа на экране.',
       condition: () =>
-        progress.metrics['ppv']?.status !== 'confirmed' &&
-        progress.metrics['goal']?.status === 'confirmed',
+        !isMetricClosed(progress.metrics['ppv']?.status) &&
+        isMetricClosed(progress.metrics['goal']?.status),
     },
   ];
 

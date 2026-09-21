@@ -22,6 +22,7 @@ import {
   SuggestedReply,
   SuggestionLockState,
   TranscriptTurn,
+  isMetricClosed,
 } from './types';
 import {
   detectLocalObjection,
@@ -331,9 +332,9 @@ export const App: React.FC = () => {
     // 6. Check if topic is still open
     if (pending.closesMetric) {
       const metric = conversationStateRef.current.scriptProgress?.metrics?.[pending.closesMetric];
-      if (metric && (metric.status === 'confirmed' || metric.value)) {
+      if (metric && isMetricClosed(metric.status)) {
         console.log(
-          `[HintLifecycle] Discarded pending suggestion: metric "${pending.closesMetric}" already confirmed`
+          `[HintLifecycle] Discarded pending suggestion: metric "${pending.closesMetric}" already closed (${metric.status})`
         );
         pending.lifecycleStatus = 'suppressed';
         pendingSuggestionRef.current = null;
@@ -750,14 +751,21 @@ export const App: React.FC = () => {
             setShouldSuggest(true);
             pendingSuggestionRef.current = null;
           } else {
-            // Если actionType === 'WAIT', не сбрасываем текущую карточку резко
-            if (analysisResult.actionType !== 'WAIT') {
-              if (!suggestionLockedRef.current) {
-                setCurrentSuggestion(null);
-                currentSuggestionRef.current = null;
-                setShouldSuggest(false);
+            // REQUIREMENT: shouldSuggest=false означает только: «нет новой карточки».
+            // Это НЕ означает: «удалить существующую». Текущая карточка сохраняется,
+            // пока не наступило одно из условий: used, skipped, expired, superseded, topic closed / fact disclosed, new context, session end.
+            const current = currentSuggestionRef.current;
+            if (current?.closesMetric) {
+              const metric = conversationStateRef.current.scriptProgress?.metrics?.[current.closesMetric];
+              if (metric && isMetricClosed(metric.status)) {
+                console.log(`[Copilot] Тема текущей подсказки закрыта (${current.closesMetric}), снимаем карточку`);
+                current.lifecycleStatus = 'suppressed';
+                if (!suggestionLockedRef.current) {
+                  setCurrentSuggestion(null);
+                  currentSuggestionRef.current = null;
+                  setShouldSuggest(false);
+                }
               }
-              pendingSuggestionRef.current = null;
             }
           }
         },
@@ -772,11 +780,7 @@ export const App: React.FC = () => {
           setHasAnalysisError(true);
           const errMsg = analysisError?.message || 'Ошибка анализа речи Gemini';
           setAnalysisErrorMessage(errMsg);
-          if (!suggestionLockedRef.current) {
-            setCurrentSuggestion(null);
-            currentSuggestionRef.current = null;
-            setShouldSuggest(false);
-          }
+          // При фоновой ошибке анализа карточка НЕ сбрасывается для предотвращения мерцания (flicker)
 
           setDiagnostics((d) => ({
             ...d,

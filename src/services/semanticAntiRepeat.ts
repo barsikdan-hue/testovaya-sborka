@@ -5,8 +5,10 @@
  * or suggested and used.
  */
 
-import { ConversationState, SuggestedReply, TranscriptTurn } from '../types';
+import { ConversationState, isMetricClosed, SuggestedReply, TranscriptTurn } from '../types';
 import { normalizeRussianText } from './textUtils';
+
+export { isMetricClosed };
 
 export interface AntiRepeatCheckResult {
   accepted: boolean;
@@ -272,18 +274,25 @@ export function checkSemanticAntiRepeat(
   }
 
   if (key === 'ask_family_mortgage') {
-    if (metrics?.['familyMortgage']?.status === 'not_applicable') {
+    if (isMetricClosed(metrics?.['familyMortgage']?.status)) {
       return {
         accepted: false,
         semanticKey: key,
-        rejectionReason: `Семейная ипотека не применима (дети взрослые или отсутствуют). Повторный вопрос запрещен!`,
+        rejectionReason: `Семейная ипотека закрыта (${metrics?.['familyMortgage']?.value || 'не применима или подтверждена'}). Повторный вопрос запрещен!`,
       };
     }
-    if (metrics?.['familyMortgage']?.status === 'confirmed' || metrics?.['familyMortgage']?.agentQuestionAsked) {
+    if (state.familyMortgage?.status && isMetricClosed(state.familyMortgage.status)) {
       return {
         accepted: false,
         semanticKey: key,
-        rejectionReason: `Статус семейной ипотеки уже подтвержден.`,
+        rejectionReason: `Семейная ипотека закрыта в профиле клиента (${state.familyMortgage.value || 'не применима или подтверждена'}). Повторный вопрос запрещен!`,
+      };
+    }
+    if (metrics?.['familyMortgage']?.agentQuestionAsked) {
+      return {
+        accepted: false,
+        semanticKey: key,
+        rejectionReason: `Статус семейной ипотеки уже уточнялся риелтором.`,
       };
     }
   }
