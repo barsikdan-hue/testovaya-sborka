@@ -894,36 +894,28 @@ export function evaluateFirstCallScript(
     allClientText.includes('студент') ||
     allClientText.includes('выросли');
 
-  const under7Markers =
-    allClientText.includes('до 7') ||
-    allClientText.includes('до семи') ||
-    allClientText.includes('3 года') ||
-    allClientText.includes('три года') ||
-    allClientText.includes('4 года') ||
-    allClientText.includes('четыре года') ||
-    allClientText.includes('5 лет') ||
-    allClientText.includes('пять лет') ||
-    allClientText.includes('6 лет') ||
-    allClientText.includes('шесть лет') ||
-    allClientText.includes('маленькие дети') ||
-    allClientText.includes('малыш') ||
-    allClientText.includes('детский сад');
+  const noChildUnder7Markers =
+    allClientText.includes('детей до 7 лет нет') ||
+    allClientText.includes('детей до семи лет нет') ||
+    allClientText.includes('нет детей до 7') ||
+    allClientText.includes('нет детей до семи');
 
-  const genericChildrenMarkers =
-    allClientText.includes('ребенок') ||
-    allClientText.includes('ребёнок') ||
-    allClientText.includes('дети') ||
-    allClientText.includes('дочь') ||
-    allClientText.includes('сын');
+  const under7PositiveMarkers =
+    !noChildUnder7Markers &&
+    Boolean(
+      allClientText.match(
+        /(?:(?:реб[её]нк(?:у|а)?|дет(?:ям|ей|и)|сыну|дочер(?:и|ь)|дочк(?:е|а|у))\s*(?:до\s*7\s*(?:лет|года)?|[1-6]\s*(?:год(?:а)?|лет))|(?:до\s*7\s*(?:лет|года)?|[1-6]\s*(?:год(?:а)?|лет))\s*(?:реб[её]нк(?:у|а)?|дет(?:ям|ей|и)|сыну|дочер(?:и|ь)|дочк(?:е|а|у))|маленьк(?:ие|их)\s*дет(?:и|ей)|малыш|(?:есть\s+)?(?:реб[её]нок|дети)\s+до\s*7\s*(?:лет|года)?)/iu
+      )
+    );
+
+  const genericChildrenMarkers = Boolean(
+    allClientText.match(/(?:есть\s+(?:реб[её]нок|дети)|реб[её]нок|реб[её]нка|реб[её]нку|дет(?:и|ей)|сыну|дочери|сын|дочь)/iu)
+  );
 
   const noChildrenMarkers =
-    allClientText.includes('детей нет') ||
-    allClientText.includes('нет детей') ||
-    allClientText.includes('без детей') ||
-    allClientText.includes('нет ребенка') ||
-    allClientText.includes('нет ребёнка') ||
-    allClientText.includes('детей пока нет') ||
-    allClientText.includes('детей у нас нет');
+    Boolean(
+      allClientText.match(/(?:(?:нет|нету|без)\s*детей|детей\s*(?:у\s*нас\s*)?(?:пока\s*)?нет|нет\s*реб[её]нка|без\s*реб[её]нка)/iu)
+    ) && !noChildUnder7Markers;
 
   // Check state confirmedFacts for family mortgage / children facts
   const famFact = state.confirmedFacts.find(
@@ -948,6 +940,11 @@ export function evaluateFirstCallScript(
     famValue = 'Детей нет (семейная ипотека не применима)';
     famReason = 'Клиент подтвердил отсутствие детей.';
     famNeedsClarification = false;
+  } else if (noChildUnder7Markers) {
+    famStatus = 'not_applicable';
+    famValue = 'Нет детей до 7 лет (семейная ипотека по возрасту детей не применима)';
+    famReason = 'Клиент подтвердил отсутствие детей подходящего возраста (до 7 лет). Льготная семейная ипотека не применима.';
+    famNeedsClarification = false;
   } else if (adultChildrenMarkers && genericChildrenMarkers) {
     // Spec rule: Children exist, but NOT under 7 -> family mortgage does NOT apply by age!
     // Do NOT say "no kids"! Do NOT ask again! Status = not_applicable!
@@ -955,12 +952,12 @@ export function evaluateFirstCallScript(
     famValue = 'Дети взрослые / живут отдельно (семейная ипотека по возрасту не применима)';
     famReason = 'Клиент сообщил о совершеннолетних / отдельно живущих детях. Семейная ипотека под 6% не подходит по возрасту. Повторный вопрос не требуется.';
     famNeedsClarification = false;
-  } else if (under7Markers) {
+  } else if (under7PositiveMarkers) {
     famStatus = 'confirmed';
     famValue = 'Есть ребёнок до 7 лет (подходит под семейную ипотеку 6%)';
     famReason = 'Подтверждено наличие ребёнка до 7 лет, подходит под условия льготной семейной ипотеки.';
     famNeedsClarification = false;
-  } else if (genericChildrenMarkers && !adultChildrenMarkers && !under7Markers) {
+  } else if (genericChildrenMarkers && !adultChildrenMarkers && !under7PositiveMarkers) {
     famStatus = 'partially_confirmed';
     famValue = 'Есть дети (возраст не уточнён — проверить, есть ли до 7 лет)';
     famReason = 'Наличие детей озвучено, но возраст неизвестен: требуется уточнить, есть ли дети до 7 лет.';
@@ -1083,23 +1080,28 @@ export function evaluateFirstCallScript(
       'не планируем ипотеку',
       'не хочу ипотеку',
       'не хотим ипотеку',
+      'не хотелось бы ипотеку',
       'не рассматриваю ипотеку',
       'не рассматриваем ипотеку',
       'ипотека не подходит',
       'ипотекой раньше не пользовался, но сейчас',
+      'ипотекой никогда не пользовался',
+      'ипотекой не пользовался',
     ]) ||
-    (allClientText.includes('ипотек') && allClientText.includes('не нужн') && !allClientText.includes('хочу купить в ипотеку'));
+    (allClientText.includes('ипотек') && allClientText.includes('не нужн') && !allClientText.includes('хочу купить в ипотеку')) ||
+    (allClientText.includes('не хочу') && allClientText.includes('ипотек'));
 
   const mortgageExplicitIntent =
-    allClientText.includes('в ипотеку') ||
-    allClientText.includes('под ипотеку') ||
-    allClientText.includes('хочу купить в ипотеку') ||
-    allClientText.includes('буду в ипотеку') ||
-    allClientText.includes('покупать буду в ипотеку') ||
-    allClientText.includes('купим в ипотеку') ||
-    allClientText.includes('через ипотеку') ||
-    allClientText.includes('ипотечное кредитование') ||
-    allClientText.includes('одобрен');
+    !mortgageNegationInClientText &&
+    (allClientText.includes('в ипотеку') ||
+      allClientText.includes('под ипотеку') ||
+      allClientText.includes('хочу купить в ипотеку') ||
+      allClientText.includes('буду в ипотеку') ||
+      allClientText.includes('покупать буду в ипотеку') ||
+      allClientText.includes('купим в ипотеку') ||
+      allClientText.includes('через ипотеку') ||
+      allClientText.includes('ипотечное кредитование') ||
+      allClientText.includes('одобрен'));
 
   const cashInClientText =
     allClientText.includes('наличн') ||
@@ -1480,6 +1482,12 @@ export function evaluateFirstCallScript(
     clientAgreed = true;
   } else {
     const lastText = lastClientTurn?.text?.toLowerCase() || '';
+    const isPoliteAgreement =
+      hasPhrase(lastText, 'нет проблем') ||
+      hasPhrase(lastText, 'без проблем') ||
+      hasPhrase(lastText, 'нет вопросов') ||
+      hasPhrase(lastText, 'не проблема');
+
     const hasRejection =
       hasPhrase(lastText, 'да нет') ||
       hasPhrase(lastText, 'не подходит') ||
@@ -1487,7 +1495,8 @@ export function evaluateFirstCallScript(
       hasPhrase(lastText, 'не смогу') ||
       hasPhrase(lastText, 'не нужно') ||
       hasPhrase(lastText, 'не надо') ||
-      hasAnyWholeWord(lastText.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim(), ['нет', 'неудобно', 'нельзя']);
+      hasAnyWholeWord(lastText.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim(), ['неудобно', 'нельзя']) ||
+      (!isPoliteAgreement && hasAnyWholeWord(lastText.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»]/g, '').trim(), ['нет']));
 
     if (
       !hasRejection &&

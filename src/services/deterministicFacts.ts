@@ -129,9 +129,24 @@ export function extractDeterministicFacts(
 
   // 4. Payment Method & Financing
   const cashMatch = lower.match(/(?:наличн(?:ые|ыми|ых)|расчет\s*наличными|расчёт\s*наличными|100%\s*оплата|свои\s*средства|собственн(?:ые|ыми)\s*средств(?:а|ами))/iu);
-  const mortgageNegationMatch = lower.match(/(?:(?:не\s*(?:нужн(?:а|о)|планиру(?:ю|ем)|хот(?:им|ел|ела|ели)|буд(?:ем|у)|рассматрива(?:ем|ю)|подходит|интересует)|без)\s*ипотек(?:и|у)?|ипотек(?:а|у)?\s*(?:мне|нам|пока)?\s*не\s*(?:нужн(?:а|о)|интересн(?:а|о)|подходит)|ипотек(?:ой)?\s*(?:раньше\s*)?не\s*пользовал(?:ся|ись|ась))/iu);
-  const mortgageIntentMatch = lower.match(/(?:в\s*ипотеку|под\s*ипотеку|хочу\s*(?:в\s*)?ипотеку|буду\s*(?:в\s*)?ипотеку|купим\s*(?:в\s*)?ипотеку|планируем\s*(?:в\s*)?ипотеку|через\s*ипотеку|с\s*помощью\s*ипотеки|оформ(?:ить|ляем|им)\s*ипотеку|ипотек(?:а|у|ой)\s*(?:рассматрива(?:ем|ю)|подходит|нужна)|ипотечное\s*кредитование)/iu);
-  const genericMortgageMatch = lower.match(/(?:ипотек(?:а|у|ой)|в\s*ипотеку)/iu);
+  
+  // Explicit current negative intent towards mortgage (e.g. "не хочу ипотеку", "не нужна ипотека", "без ипотеки")
+  const explicitMortgageNegative = lower.match(
+    /(?:(?:не\s*(?:нужн(?:а|о)|планиру(?:ю|ем)|хоч(?:у|ешь)|хот(?:им|ел|ела|ели|елось|елось\s*бы)|буд(?:ем|у)|рассматрива(?:ем|ю)|подходит|интересует|люблю)|без)\s*ипотек(?:и|у)?|ипотек(?:а|у|ой)?\s*(?:мне|нам|пока)?\s*не\s*(?:нужн(?:а|о)|интересн(?:а|о)|подходит|хоч(?:у|ется)))/iu
+  );
+
+  // Stating they didn't use mortgage in the past (e.g. "ипотекой раньше не пользовался")
+  const pastExperienceNegation = !explicitMortgageNegative && lower.match(
+    /(?:ипотек(?:ой)?\s*(?:раньше|никогда)?\s*не\s*(?:пользовал(?:ся|ись|ась)|брал(?:и)?))/iu
+  );
+
+  // Positive intent (e.g. "хочу купить в ипотеку", "в ипотеку", "рассматриваю вариант ипотека")
+  const mortgageIntentMatch = !explicitMortgageNegative && lower.match(
+    /(?:в\s*ипотеку|под\s*ипотеку|(?:^|[^\wа-яё])хочу\s*(?:купить\s*)?(?:в\s*)?ипотеку|буду\s*(?:в\s*)?ипотеку|купим\s*(?:в\s*)?ипотеку|планируем\s*(?:в\s*)?ипотеку|через\s*ипотеку|с\s*помощью\s*ипотеки|оформ(?:ить|ляем|им)\s*ипотеку|ипотек(?:а|у|ой)\s*(?:рассматрива(?:ем|ю)|подходит|нужна)|(?:рассматрива(?:ем|ю)\s*(?:вариант\s*)?)ипотек(?:а|у|ой)|ипотечное\s*кредитование)/iu
+  );
+
+  const mortgageNegationMatch = explicitMortgageNegative || (pastExperienceNegation && !mortgageIntentMatch);
+  const genericMortgageMatch = !mortgageNegationMatch && lower.match(/(?:ипотек(?:а|у|ой)|в\s*ипотеку)/iu);
   const installmentMatch = lower.match(/(?:рассрочк(?:а|у|ой)|в\s*рассрочку)/iu);
 
   // If client specifically intends mortgage (even if stating they haven't used it in the past), give precedence to explicit intent
@@ -157,11 +172,33 @@ export function extractDeterministicFacts(
   }
 
   // 5. Family & Children (Family Mortgage eligibility check)
-  const noChildrenMatch = lower.match(/(?:(?:нет|нету|без)\s*детей|детей\s*(?:у\s*нас\s*)?(?:пока\s*)?нет|нет\s*реб[её]нка|без\s*реб[её]нка)/iu);
-  const childUnder7Match = lower.match(/(?:реб[её]нк(?:у)?\s*([1-6])\s*(?:год(?:а)?|лет)|до\s*7\s*лет|маленьк(?:ие|их)\s*дет(?:и|ей)|малыш|детский\s*сад)/iu);
-  const childGenericMatch = lower.match(/(?:реб[её]нок|реб[её]нка|реб[её]нку|дет(?:и|ей)|сыну|дочери|сын|дочь)/iu);
+  // Scoped negation: "детей до 7 лет нет" is specific to the under-7 eligibility, not proof of having no kids at all
+  const noChildUnder7Match = lower.match(
+    /(?:(?:нет|нету|без)\s*(?:маленьких\s*)?детей\s*(?:до\s*7\s*(?:лет|года)?)|детей\s*(?:до\s*7\s*(?:лет|года)?)\s*(?:у\s*нас\s*)?(?:пока\s*)?нет)/iu
+  );
+  // General negation: client explicitly has no children
+  const noChildrenMatch = !noChildUnder7Match && lower.match(
+    /(?:(?:нет|нету|без)\s*детей|детей\s*(?:у\s*нас\s*)?(?:пока\s*)?нет|нет\s*реб[её]нка|без\s*реб[её]нка)/iu
+  );
+  // Explicit positive evidence of child under 7: must be bound to child words, not loan terms like "рассрочка до 7 лет" or infrastructure like "детский сад"
+  const childUnder7Match = !noChildUnder7Match && !noChildrenMatch && lower.match(
+    /(?:(?:реб[её]нк(?:у|а)?|дет(?:ям|ей|и)|сыну|дочер(?:и|ь)|дочк(?:е|а|у))\s*(?:до\s*7\s*(?:лет|года)?|[1-6]\s*(?:год(?:а)?|лет))|(?:до\s*7\s*(?:лет|года)?|[1-6]\s*(?:год(?:а)?|лет))\s*(?:реб[её]нк(?:у|а)?|дет(?:ям|ей|и)|сыну|дочер(?:и|ь)|дочк(?:е|а|у))|маленьк(?:ие|их)\s*дет(?:и|ей)|малыш|(?:есть\s+)?(?:реб[её]нок|дети)\s+до\s*7\s*(?:лет|года)?)/iu
+  );
+  // Generic children mentioned (without verified age)
+  const childGenericMatch = !noChildUnder7Match && !noChildrenMatch && !childUnder7Match && lower.match(
+    /(?:есть\s+(?:реб[её]нок|дети)|реб[её]нок|реб[её]нка|реб[её]нку|дет(?:и|ей)|сыну|дочери|сын|дочь)/iu
+  );
 
-  if (noChildrenMatch) {
+  if (noChildUnder7Match) {
+    addFact(
+      'familyMortgage',
+      'familyMortgage',
+      'Нет детей до 7 лет (семейная ипотека по возрасту детей не применима)',
+      noChildUnder7Match[0],
+      0.95,
+      { status: 'confirmed', needsClarification: false }
+    );
+  } else if (noChildrenMatch) {
     // Explicit negative fact: children absent
     addFact(
       'familyMortgage',
@@ -240,32 +277,41 @@ export function extractDeterministicFacts(
   }
 
   // 11. Contextual agreedNextStep (e.g. Agent: "Видеопоказ завтра в 15:00 удобно?" -> Client: "Да")
+  // Check polite agreement idioms (e.g., "нет проблем, завтра в 15:00 удобно", "без проблем", "нет вопросов")
+  const isPoliteAgreement =
+    hasPhrase(lower, 'нет проблем') ||
+    hasPhrase(lower, 'без проблем') ||
+    hasPhrase(lower, 'нет вопросов') ||
+    hasPhrase(lower, 'не проблема');
+
   // Check if client explicitly rejects the proposed meeting/step (e.g. "да нет", "не подходит", "не удобно", "не смогу", "не надо", "нет")
   const isNegativeNextStep =
-    hasAnyWholeWord(clean, ['нет', 'нельзя', 'неудобно']) ||
     hasPhrase(lower, 'да нет') ||
     hasPhrase(lower, 'не подходит') ||
     hasPhrase(lower, 'не удобно') ||
     hasPhrase(lower, 'не смогу') ||
     hasPhrase(lower, 'не нужно') ||
-    hasPhrase(lower, 'не надо');
+    hasPhrase(lower, 'не надо') ||
+    hasAnyWholeWord(clean, ['нельзя', 'неудобно']) ||
+    (!isPoliteAgreement && hasAnyWholeWord(clean, ['нет']));
 
   const isAffirmative =
     !isNegativeNextStep &&
-    hasAnyWholeWord(clean, [
-      'да',
-      'хорошо',
-      'конечно',
-      'согласен',
-      'согласна',
-      'удобно',
-      'договорились',
-      'давайте',
-      'ок',
-      'окей',
-      'подходит',
-      'точно',
-    ]);
+    (isPoliteAgreement ||
+      hasAnyWholeWord(clean, [
+        'да',
+        'хорошо',
+        'конечно',
+        'согласен',
+        'согласна',
+        'удобно',
+        'договорились',
+        'давайте',
+        'ок',
+        'окей',
+        'подходит',
+        'точно',
+      ]));
 
   if (previousAgentTurnText) {
     const prevLower = previousAgentTurnText.toLowerCase();
@@ -280,7 +326,8 @@ export function extractDeterministicFacts(
     if (isAffirmative && hasNextStepProposal) {
       // Extract proposed step detail if present, or generate descriptive step
       let stepValue = 'Видеопоказ';
-      if (prevLower.includes('видеопоказ завтра в 15:00') || (prevLower.includes('завтра') && prevLower.includes('15:00'))) {
+      const combined = `${prevLower} ${lower}`;
+      if (combined.includes('завтра') && combined.includes('15:00')) {
         stepValue = 'Видеопоказ завтра в 15:00';
       } else if (prevLower.includes('видеопоказ') || prevLower.includes('видео')) {
         stepValue = 'Видеопоказ вариантов';
