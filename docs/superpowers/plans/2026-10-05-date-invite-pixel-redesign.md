@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. 🦸 SUPERPOWERS is mandatory for implementation, debugging, TDD and verification.
 
-**Goal:** Rebuild the existing Date Invite static site to closely match the approved warm romantic sunset reference while preserving direct Telegram delivery and adding a functional alternate-date flow.
+**Goal:** Rebuild the existing Date Invite static site to closely match the approved warm romantic sunset reference while preserving direct Telegram delivery and removing all date-related UI and logic.
 
-**Architecture:** Keep the existing dependency-free Render Static Site. Replace the old four-step sealed/letter/choice/result UI with three reference-driven views (`invitation`, `date_picker`, `success`). Use three dedicated image assets for the terrace hero, date illustration and success illustration; keep state and date formatting in small JS modules and keep Telegram deep-link generation isolated in `delivery.js`.
+**Architecture:** Keep the existing dependency-free Render Static Site. Replace the old sealed/letter/choice/result UI with two reference-driven views (`invitation`, `success`). Use two dedicated image assets for the terrace hero and success illustration; keep Telegram deep-link generation isolated in `delivery.js`. The secondary choice opens Telegram directly with a fixed alternate-day message.
 
 **Tech Stack:** HTML, CSS, vanilla ES modules, Node built-in `node:test` for behavior tests, Render Static Site.
 
@@ -16,16 +16,17 @@
 - No backend, database, auth, tracking, cookies, analytics, or new runtime dependencies.
 - Preserve `@DanilVlasenk` Telegram delivery and `noindex,nofollow`.
 - Accepted-response text must remain exactly: `Да ❤️ Я согласна. Посмотрим, что ты придумал 😌`.
-- Alternate-date continue must open Telegram with the chosen date; no automatic send.
+- Alternate-day text must remain exactly: `Давай выберем другой день 🙂`.
+- No dates, calendar controls, date inputs, or date formatting logic anywhere.
 - Do not distribute font files.
 - Use TDD for behavior changes: RED → GREEN → full regression → static check → live smoke.
 
 ## Review Focus
 1. 320px width: no clipped headline/buttons and no horizontal scroll.
 2. Short mobile viewport (~800px): question card remains reachable without overlap or inaccessible controls.
-3. Dynamic dates across month/year boundaries: four options display correctly and Telegram text uses the selected calendar date.
-4. Custom date input overrides quick selection and produces the correct Telegram draft.
-5. Telegram deep-links preserve emoji/Cyrillic and never auto-send.
+3. Telegram deep-links preserve Cyrillic + emoji for both message variants.
+4. Secondary CTA opens Telegram directly without rendering an intermediate screen.
+5. No date-related UI, assets, copy or dead JS remains in the production build.
 
 ---
 
@@ -33,94 +34,65 @@
 
 **Files:**
 - Create: `date-invite/public/assets/hero-sunset.webp`
-- Create: `date-invite/public/assets/date-picker.webp`
 - Create: `date-invite/public/assets/success-envelope.webp`
 
 **Interfaces:**
 - Consumes: approved 941×1672 reference image and the asset descriptions in the spec.
-- Produces: three clean UI-safe assets with no baked-in Russian UI copy.
+- Produces: two clean UI-safe assets with no baked-in Russian UI copy.
 
 - [ ] **Step 1: Generate hero asset**
 
 Create a clean golden-hour terrace image matching the reference scene: city/water, string lights, daisies, candle, two mugs, no people, no baked-in text.
 
-- [ ] **Step 2: Generate date illustration asset**
-
-Create the cream/pastel calendar + mug + foliage illustration with sparse coral hearts and no baked-in UI copy.
-
-- [ ] **Step 3: Generate success illustration asset**
+- [ ] **Step 2: Generate success illustration asset**
 
 Create the cream/pastel envelope + heart card + floral sprig illustration with sparse coral hearts and no baked-in UI copy.
 
-- [ ] **Step 4: Optimize and verify dimensions**
+- [ ] **Step 3: Optimize and verify dimensions**
 
 Use WebP, sized to avoid visible blur at 430px CSS width and small enough for fast mobile load. Verify no text artifacts.
 
-- [ ] **Step 5: Commit assets**
+- [ ] **Step 4: Commit assets**
 
 Commit message: `feat(date-invite): add reference-matched visual assets`
 
 ---
 
-### Task 2: State Model and Dynamic Date Options
+### Task 2: State Model and Response Texts
 
 **Files:**
 - Modify: `date-invite/public/js/invite.js`
-- Create: `date-invite/public/js/date-options.js`
 - Test: `date-invite/test/invite.test.js`
-- Test: `date-invite/test/date-options.test.js`
 
 **Interfaces:**
 - Produces `initialState()`, `transition(state, event)`, `createResponseText(answer, config)`.
-- Produces `buildQuickDates(now)`, `formatDateLabel(date)`, `createAlternateDateText(date)`.
 - `app.js` consumes these functions in Task 4.
 
 - [ ] **Step 1: Write failing state tests**
 
-Pin transitions:
+Pin:
 - initial state = `invitation`
 - `YES` → `success`
-- `LATER` → `date_picker`
-- `BACK` from picker → `invitation`
 - invalid/repeated events do not move state
-- accepted response text remains exact
+- accepted response text remains exactly `Да ❤️ Я согласна. Посмотрим, что ты придумал 😌`
+- alternate response text remains exactly `Давай выберем другой день 🙂`
 
 - [ ] **Step 2: Run state tests and verify RED**
 
 Run: `node --test date-invite/test/invite.test.js`
 Expected: FAIL because current state names/transition contract are old.
 
-- [ ] **Step 3: Implement minimal new state model**
+- [ ] **Step 3: Implement minimal two-state model**
 
-Replace sealed/letter/choice/result state machine with the three states from the spec.
+Replace sealed/letter/choice/result state machine with `invitation` and `success`. Keep alternate-day behavior as a response action, not a state.
 
 - [ ] **Step 4: Run state tests and verify GREEN**
 
 Expected: PASS.
 
-- [ ] **Step 5: Write failing date-option tests**
+- [ ] **Step 5: Commit**
 
-Assert:
-- exactly four upcoming options
-- month/year rollover works
-- Russian weekday/day/month labels are stable
-- custom/selected date text format is `Давай выберем другой день 🙂 Мне подходит {day} {month}.`
-
-- [ ] **Step 6: Run date-option tests and verify RED**
-
-Expected: FAIL because module does not exist.
-
-- [ ] **Step 7: Implement `date-options.js`**
-
-Use visitor-local calendar dates and deterministic Russian label formatting. No external date library.
-
-- [ ] **Step 8: Run date-option tests and verify GREEN**
-
-Expected: PASS.
-
-- [ ] **Step 9: Commit**
-
-Commit message: `feat(date-invite): add reference flow and date selection model`
+Commit message: `feat(date-invite): simplify invitation state flow`
 
 ---
 
@@ -134,20 +106,15 @@ Commit message: `feat(date-invite): add reference flow and date selection model`
 **Interfaces:**
 - DOM hooks required by Task 4:
   - `[data-screen="invitation"]`
-  - `[data-screen="date_picker"]`
   - `[data-screen="success"]`
   - `#yes-button`
   - `#later-button`
-  - `#date-back`
-  - `#quick-dates`
-  - `#custom-date`
-  - `#date-continue`
   - `#send-response`
   - `#response-preview`
 
 - [ ] **Step 1: Write failing static-contract tests**
 
-Assert exact required copy, required three screens, asset references, required controls, `noindex,nofollow`, semantic buttons and absence of the old envelope/letter UI.
+Assert exact required copy, required two screens, asset references, required controls, `noindex,nofollow`, semantic buttons, absence of the old envelope/letter UI, and absence of all calendar/date-picker markup.
 
 - [ ] **Step 2: Run static test and verify RED**
 
@@ -155,7 +122,7 @@ Expected: FAIL against current markup.
 
 - [ ] **Step 3: Replace HTML structure**
 
-Implement the three screens only, preserving accessibility labels and safe-area behavior.
+Implement only the two approved screens, preserving accessibility labels and safe-area behavior.
 
 - [ ] **Step 4: Replace CSS with design tokens and reference geometry**
 
@@ -165,7 +132,6 @@ Implement:
 - reference-like top typography placement
 - cream bottom question card with 64px heart tab
 - 72px primary/secondary buttons
-- reference-like date cards
 - reference-like success layout
 - motion tokens + reduced-motion fallback
 
@@ -187,7 +153,7 @@ Commit message: `feat(date-invite): rebuild UI from approved reference`
 
 ---
 
-### Task 4: Wire Interaction and Telegram Date Flow
+### Task 4: Wire Interaction and Telegram Flow
 
 **Files:**
 - Replace: `date-invite/public/js/app.js`
@@ -197,18 +163,15 @@ Commit message: `feat(date-invite): rebuild UI from approved reference`
 
 **Interfaces:**
 - Uses state functions from Task 2.
-- Uses date-option functions from Task 2.
 - Uses `buildTelegramUrl(text, username)` / `deliverResponse(text, location)` from `delivery.js`.
 
 - [ ] **Step 1: Write failing interaction-contract tests**
 
 Pin:
 - YES renders success and exact response preview
-- LATER renders date picker
-- selecting a quick date updates selected state
-- custom date overrides quick selection
-- date continue builds Telegram text for chosen date
-- success send builds Telegram text for accepted response
+- LATER opens Telegram directly with `Давай выберем другой день 🙂`
+- success send opens Telegram with `Да ❤️ Я согласна. Посмотрим, что ты придумал 😌`
+- no intermediate date-picker state exists
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -228,7 +191,7 @@ Run delivery tests for Cyrillic + emoji and both message variants.
 
 - [ ] **Step 6: Commit**
 
-Commit message: `feat(date-invite): wire Telegram date and success flows`
+Commit message: `feat(date-invite): wire simplified Telegram flows`
 
 ---
 
@@ -248,7 +211,7 @@ Expected: 0 FAIL.
 
 - [ ] **Step 2: Run static check**
 
-Verify all HTML/CSS/JS/assets exist and expected copy/hooks are present.
+Verify all HTML/CSS/JS/assets exist, expected copy/hooks are present, and date-related artifacts are absent.
 
 - [ ] **Step 3: Push final commits to `date-invite`**
 
@@ -262,9 +225,8 @@ Confirm deployed commit matches the branch head.
 
 Browser-test:
 - YES → success → Telegram `@DanilVlasenk` with exact accepted text, do not send
-- LATER → quick date → Telegram with chosen date, do not send
-- LATER → custom date → Telegram with custom date, do not send
-- BACK → invitation
+- LATER → Telegram `@DanilVlasenk` with `Давай выберем другой день 🙂`, do not send
+- confirm no calendar/date-picker screen is reachable
 
 - [ ] **Step 6: Live visual pixel review**
 
@@ -273,7 +235,6 @@ At 390px first, compare against reference for:
 - headline coordinates
 - question-card top edge and heart tab
 - button heights/widths/radii
-- date illustration/card spacing
 - success illustration/text/CTA spacing
 
 Then verify 320 / 360 / 412 / 430px for responsive integrity.
