@@ -1,85 +1,63 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="robots" content="noindex,nofollow">
-    <meta name="theme-color" content="#f7efe9">
-    <meta name="description" content="Небольшое личное приглашение на свидание.">
-    <title>Для тебя 💌</title>
-    <link rel="stylesheet" href="./styles.css">
-  </head>
-  <body>
-    <div class="ambient ambient-one" aria-hidden="true"></div>
-    <div class="ambient ambient-two" aria-hidden="true"></div>
-    <div class="grain" aria-hidden="true"></div>
-
-    <main class="app-shell" aria-label="Личное приглашение">
-      <section class="screen is-active" data-screen="sealed" tabindex="-1">
-        <p class="eyebrow" id="eyebrow">одно маленькое приглашение</p>
-        <h1 id="intro-title">Для тебя кое-что есть</h1>
-        <p class="lead">Открывается только одним способом.</p>
-
-        <button class="envelope-button" id="open-invite" type="button" aria-label="Открыть приглашение">
-          <span class="envelope" aria-hidden="true">
-            <span class="envelope-back"></span>
-            <span class="envelope-paper">💌</span>
-            <span class="envelope-front"></span>
-            <span class="envelope-flap"></span>
-            <span class="seal">♡</span>
-          </span>
-          <span class="button-caption">Открыть</span>
-        </button>
-      </section>
-
-      <section class="screen" data-screen="letter" tabindex="-1" hidden>
-        <p class="eyebrow">лично от Данила</p>
-        <div class="letter-card">
-          <span class="tiny-mark" aria-hidden="true">✦</span>
-          <h2 id="letter-title">Хочу украсть у суеты один вечер</h2>
-          <p id="letter-text"></p>
-          <p class="signature">Данил</p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#FCDCCE">
+  <meta name="description" content="Личное приглашение на свидание.">
+  <title>Для тебя ❤️</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="phone-canvas" aria-label="Личное приглашение">
+    <section class="screen invitation-screen is-active" data-screen="invitation" tabindex="-1">
+      <div class="hero">
+        <img class="hero-image" src="./assets/hero-sunset.webp" alt="" aria-hidden="true">
+        <div class="hero-copy">
+          <p class="eyebrow">ОДНО МАЛЕНЬКОЕ ПРИГЛАШЕНИЕ</p>
+          <div class="doodle-line" aria-hidden="true"><span></span><b>♡</b><span></span></div>
+          <h1>Для тебя<br>кое-что есть <em>♡</em></h1>
+          <p>Хочу украсть у суеты<br>один вечер.</p>
+          <p>И провести его с тобой.</p>
         </div>
-        <button class="primary-button" id="continue-invite" type="button">И что дальше?</button>
-      </section>
+      </div>
 
-      <section class="screen" data-screen="choice" tabindex="-1" hidden>
-        <p class="eyebrow">самый важный вопрос</p>
-        <h2 id="question">Пойдёшь со мной на свидание?</h2>
-        <p class="lead compact">Без правильного ответа. Только как тебе хочется.</p>
-        <div class="choice-grid" role="group" aria-label="Выбрать ответ">
-          <button class="choice-button choice-primary" type="button" data-answer="yes">
-            <span>Да ❤️</span>
-            <small>Звучит как хороший план</small>
+      <section class="question-card" aria-labelledby="question-title">
+        <div class="heart-tab" aria-hidden="true">♥</div>
+        <span class="heart-doodle heart-left" aria-hidden="true">♡</span>
+        <span class="heart-doodle heart-right" aria-hidden="true">♡</span>
+        <h2 id="question-title">Пойдёшь со мной<br>на свидание?</h2>
+        <div class="actions">
+          <button id="yes-button" class="btn btn-primary" type="button">
+            <span>Да ❤️</span><span class="round-icon" aria-hidden="true">›</span>
           </button>
-          <button class="choice-button" type="button" data-answer="later">
-            <span>Давай выберем другой день</span>
-            <small>Идея нравится, но время обсудим</small>
+          <button id="later-button" class="btn btn-secondary" type="button">
+            <span>Давай выберем другой день</span><span class="round-icon calendar" aria-hidden="true">▣</span>
           </button>
         </div>
+        <div class="bottom-heart" aria-hidden="true">♡</div>
       </section>
+    </section>
 
-      <section class="screen" data-screen="result" tabindex="-1" hidden>
-        <div class="result-symbol" aria-hidden="true">♡</div>
-        <p class="eyebrow">ответ принят вселенной</p>
-        <h2 id="result-title"></h2>
-        <p class="lead" id="result-text"></p>
-
-        <div class="response-card">
-          <p class="response-label">Сообщение для Данила</p>
-          <p id="response-preview"></p>
-        </div>
-
-        <button class="primary-button" id="send-response" type="button">Отправить Данилу</button>
-        <p class="share-status" id="share-status" aria-live="polite"></p>
-      </section>
-    </main>
-
-    <footer class="footer-note">Сделано без регистрации, слежки и неловких анкет.</footer>
-
-    <noscript>
-      <div class="noscript">Для этого приглашения нужен JavaScript. Включи его и обнови страницу.</div>
-    </noscript>
-    <script type="module" src="./js/app.js"></script>
-  </body>
+    <section class="screen success-screen" data-screen="success" tabindex="-1" hidden>
+      <div class="success-art-wrap">
+        <img class="success-art" src="./assets/success-envelope.webp" alt="Конверт с сердцем и цветами">
+      </div>
+      <h2>Да ❤️<br>Я согласна.</h2>
+      <p class="success-subtitle">Посмотрим, что ты придумал 😌</p>
+      <div class="message-card">
+        <span class="mini-heart" aria-hidden="true">♡</span>
+        <p id="response-preview">Да ❤️ Я согласна. Посмотрим, что ты придумал 😌</p>
+      </div>
+      <button id="send-response" class="btn btn-primary send-button" type="button">
+        <span>Отправить Данилу</span><span class="round-icon telegram" aria-hidden="true">➤</span>
+      </button>
+      <p id="share-status" class="share-status" aria-live="polite"></p>
+      <div class="bottom-heart" aria-hidden="true">♡</div>
+    </section>
+  </main>
+  <noscript><div class="noscript">Для приглашения нужен JavaScript.</div></noscript>
+  <script type="module" src="./js/app.js"></script>
+</body>
 </html>
