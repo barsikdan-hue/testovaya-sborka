@@ -49,3 +49,9 @@ test('later response opens Telegram directly with no tracking',async()=>{
   assert.match(app,/createResponseText\('later'\)/);
   assert.match(app,/deliverResponse\(laterText\)/);
 });
+
+test('essential content is visible even when CSS animations do not run', async () => {
+  const css = await read('public/styles.css');
+  assert.match(css, /\.screen\s*\{[^}]*opacity:\s*1;[^}]*transform:\s*none;/s);
+  assert.match(css, /@keyframes\s+screenIn\s*\{[\s\S]*from\s*\{[^}]*opacity:\s*0;[^}]*transform:\s*translateY\(16px\)\s*scale\(\.99\);[^}]*\}[\s\S]*to\s*\{[^}]*opacity:\s*1;[^}]*transform:\s*none;[^}]*\}/s);
+});
