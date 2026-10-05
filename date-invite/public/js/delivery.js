@@ -1,21 +1,10 @@
-export async function deliverResponse(text, nav = globalThis.navigator) {
-  if (nav?.share) {
-    try {
-      await nav.share({ title: 'Мой ответ', text });
-      return 'shared';
-    } catch (error) {
-      if (error?.name === 'AbortError') return 'cancelled';
-    }
-  }
+const TELEGRAM_USERNAME = 'DanilVlasenk';
 
-  if (nav?.clipboard?.writeText) {
-    try {
-      await nav.clipboard.writeText(text);
-      return 'copied';
-    } catch {
-      return 'manual';
-    }
-  }
+export function buildTelegramUrl(text, username = TELEGRAM_USERNAME) {
+  return `https://t.me/${username}?text=${encodeURIComponent(text)}`;
+}
 
-  return 'manual';
+export function deliverResponse(text, location = globalThis.location) {
+  location.href = buildTelegramUrl(text);
+  return 'telegram';
 }
