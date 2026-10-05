@@ -1,3 +1,4 @@
+import { hydrateReferenceImages } from './reference-assets.js';
 import { createResponseText, initialState, transition } from './invite.js';
 import { deliverResponse } from './delivery.js';
 
@@ -8,6 +9,8 @@ const laterButton = document.querySelector('#later-button');
 const sendButton = document.querySelector('#send-response');
 const preview = document.querySelector('#response-preview');
 const status = document.querySelector('#share-status');
+const canvas = document.querySelector('.phone-canvas');
+const assetLoader = document.querySelector('#asset-loader');
 
 function render() {
   for (const screen of screens) {
@@ -38,3 +41,14 @@ sendButton.addEventListener('click', () => {
 });
 
 render();
+
+hydrateReferenceImages()
+  .then(() => {
+    document.documentElement.classList.add('assets-ready');
+    canvas?.setAttribute('aria-busy', 'false');
+    if (assetLoader) assetLoader.hidden = true;
+  })
+  .catch(() => {
+    canvas?.setAttribute('aria-busy', 'false');
+    if (assetLoader) assetLoader.textContent = 'Не удалось загрузить приглашение. Обнови страницу.';
+  });

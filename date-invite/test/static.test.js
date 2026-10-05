@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 async function read(path){return readFile(new URL(`../${path}`, import.meta.url),'utf8');}
 
 test('HTML exposes exactly invitation and success screens',async()=>{
@@ -14,14 +14,16 @@ test('HTML exposes exactly invitation and success screens',async()=>{
   assert.match(html,/id="send-response"/);
 });
 
-test('HTML uses exact local reference WebP slices',async()=>{
+test('HTML reconstructs validated local reference WebPs from text chunks',async()=>{
   const html=await read('public/index.html');
   const app=await read('public/js/app.js');
-  assert.match(html,/src="\.\/assets\/invitation-reference\.webp"/);
-  assert.match(html,/src="\.\/assets\/success-reference\.webp"/);
+  const assets=await read('public/js/reference-assets.js');
+  assert.match(html,/id="asset-loader"/);
   assert.match(html,/width="430" height="1241"/);
   assert.match(html,/width="430" height="1040"/);
-  assert.doesNotMatch(app,/reference-assets/);
+  assert.match(app,/hydrateReferenceImages/);
+  assert.match(assets,/invitation-reference\.part1\.b64/);
+  assert.match(assets,/success-reference\.part3\.b64/);
   assert.doesNotMatch(html,/https?:\/\//);
 });
 
@@ -54,4 +56,11 @@ test('essential content is visible even when CSS animations do not run', async (
   const css = await read('public/styles.css');
   assert.match(css, /\.screen\s*\{[^}]*opacity:\s*1;[^}]*transform:\s*none;/s);
   assert.match(css, /@keyframes\s+screenIn\s*\{[\s\S]*from\s*\{[^}]*opacity:\s*0;[^}]*transform:\s*translateY\(16px\)\s*scale\(\.99\);[^}]*\}[\s\S]*to\s*\{[^}]*opacity:\s*1;[^}]*transform:\s*none;[^}]*\}/s);
+});
+
+test('reference assets hydrate on page startup, not inside answer handlers', async () => {
+  const app = await read('public/js/app.js');
+  assert.match(app, /render\(\);\s*hydrateReferenceImages\(\)/s);
+  const yesHandler = app.match(/yesButton\.addEventListener\('click',[\s\S]*?\n\}\);/)?.[0] ?? '';
+  assert.doesNotMatch(yesHandler, /hydrateReferenceImages/);
 });

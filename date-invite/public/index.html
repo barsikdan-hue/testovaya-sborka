@@ -10,12 +10,13 @@
   <link rel="stylesheet" href="./styles.css?v=android-visibility-1">
 </head>
 <body>
-  <main class="phone-canvas" aria-label="Личное приглашение">
+  <main class="phone-canvas" aria-label="Личное приглашение" aria-busy="true">
+    <div id="asset-loader" class="asset-loader" role="status">Загружаю приглашение…</div>
     <section class="screen invitation-screen is-active" data-screen="invitation" tabindex="-1">
       <img
         id="invitation-reference"
         class="reference-screen-image invitation-reference"
-        src="./assets/invitation-reference.webp"
+        src="data:image/gif;base64,R0lGODlhAQABAAAAACw="
         width="430" height="1241"
         alt="Приглашение на свидание на фоне тёплой террасы на закате"
       >
@@ -32,7 +33,7 @@
       <img
         id="success-reference"
         class="reference-screen-image success-reference"
-        src="./assets/success-reference.webp"
+        src="data:image/gif;base64,R0lGODlhAQABAAAAACw="
         width="430" height="1040"
         alt="Романтический конверт с сердцем и цветами"
       >

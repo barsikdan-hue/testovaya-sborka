@@ -197,3 +197,21 @@ button { font: inherit; }
     scroll-behavior: auto !important;
   }
 }
+
+.asset-loader {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(180deg, #FDE7DD 0%, #FFF5F0 100%);
+  color: #76564C;
+  font-size: 16px;
+  text-align: center;
+}
+
+.assets-ready .asset-loader,
+.asset-loader[hidden] {
+  display: none !important;
+}
