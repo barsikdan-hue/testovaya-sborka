@@ -28,7 +28,7 @@ export function createResponseText(answer, config) {
   const sender = config?.senderName?.trim() || 'Данил';
 
   if (answer === 'yes') {
-    return `Да ❤️ Я согласна на свидание. ${sender}, теперь выбираем день 🙂`;
+    return `Да ❤️ Я согласна. Посмотрим, что ты придумал 😌`;
   }
 
   return `Идея мне нравится 🙂 Давай вместе выберем другой день, ${sender}.`;
