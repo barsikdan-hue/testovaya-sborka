@@ -12,51 +12,43 @@
 <body>
   <main class="phone-canvas" aria-label="Личное приглашение">
     <section class="screen invitation-screen is-active" data-screen="invitation" tabindex="-1">
-      <div class="hero">
-        <img class="hero-image" src="./assets/hero-sunset.webp" alt="" aria-hidden="true">
-        <div class="hero-copy">
-          <p class="eyebrow">ОДНО МАЛЕНЬКОЕ ПРИГЛАШЕНИЕ</p>
-          <div class="doodle-line" aria-hidden="true"><span></span><b>♡</b><span></span></div>
-          <h1>Для тебя<br>кое-что есть <em>♡</em></h1>
-          <p>Хочу украсть у суеты<br>один вечер.</p>
-          <p>И провести его с тобой.</p>
-        </div>
-      </div>
+      <img
+        id="invitation-reference"
+        class="reference-screen-image invitation-reference"
+        src="./assets/invitation-reference.webp"
+        width="430" height="1241"
+        alt="Приглашение на свидание на фоне тёплой террасы на закате"
+      >
 
-      <section class="question-card" aria-labelledby="question-title">
-        <div class="heart-tab" aria-hidden="true">♥</div>
-        <span class="heart-doodle heart-left" aria-hidden="true">♡</span>
-        <span class="heart-doodle heart-right" aria-hidden="true">♡</span>
-        <h2 id="question-title">Пойдёшь со мной<br>на свидание?</h2>
-        <div class="actions">
-          <button id="yes-button" class="btn btn-primary" type="button">
-            <span>Да ❤️</span><span class="round-icon" aria-hidden="true">›</span>
-          </button>
-          <button id="later-button" class="btn btn-secondary" type="button">
-            <span>Давай выберем другой день</span><span class="round-icon calendar" aria-hidden="true">▣</span>
-          </button>
-        </div>
-        <div class="bottom-heart" aria-hidden="true">♡</div>
-      </section>
+      <button id="yes-button" class="reference-hotspot yes-hotspot" type="button">
+        <span class="sr-only">Да, я согласна на свидание</span>
+      </button>
+      <button id="later-button" class="reference-hotspot later-hotspot" type="button">
+        <span class="sr-only">Давай выберем другой день</span>
+      </button>
     </section>
 
     <section class="screen success-screen" data-screen="success" tabindex="-1" hidden>
-      <div class="success-art-wrap">
-        <img class="success-art" src="./assets/success-envelope.webp" alt="Конверт с сердцем и цветами">
-      </div>
-      <h2>Да ❤️<br>Я согласна.</h2>
-      <p class="success-subtitle">Посмотрим, что ты придумал 😌</p>
-      <div class="message-card">
-        <span class="mini-heart" aria-hidden="true">♡</span>
+      <img
+        id="success-reference"
+        class="reference-screen-image success-reference"
+        src="./assets/success-reference.webp"
+        width="430" height="1040"
+        alt="Романтический конверт с сердцем и цветами"
+      >
+
+      <div class="success-message-overlay" aria-label="Сообщение для Данила">
+        <span class="overlay-heart" aria-hidden="true">♡</span>
         <p id="response-preview">Да ❤️ Я согласна. Посмотрим, что ты придумал 😌</p>
       </div>
-      <button id="send-response" class="btn btn-primary send-button" type="button">
-        <span>Отправить Данилу</span><span class="round-icon telegram" aria-hidden="true">➤</span>
+
+      <button id="send-response" class="reference-hotspot send-hotspot" type="button">
+        <span class="sr-only">Отправить Данилу в Telegram</span>
       </button>
-      <p id="share-status" class="share-status" aria-live="polite"></p>
-      <div class="bottom-heart" aria-hidden="true">♡</div>
+      <p id="share-status" class="sr-only" aria-live="polite"></p>
     </section>
   </main>
+
   <noscript><div class="noscript">Для приглашения нужен JavaScript.</div></noscript>
   <script type="module" src="./js/app.js"></script>
 </body>
