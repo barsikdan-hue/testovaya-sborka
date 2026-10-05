@@ -64,3 +64,9 @@ test('reference assets hydrate on page startup, not inside answer handlers', asy
   const yesHandler = app.match(/yesButton\.addEventListener\('click',[\s\S]*?\n\}\);/)?.[0] ?? '';
   assert.doesNotMatch(yesHandler, /hydrateReferenceImages/);
 });
+
+test('HTML cache-busts the asset reconstruction runtime', async () => {
+  const html = await read('public/index.html');
+  assert.match(html, /styles\.css\?v=asset-rebuild-1/);
+  assert.match(html, /js\/app\.js\?v=asset-rebuild-1/);
+});
