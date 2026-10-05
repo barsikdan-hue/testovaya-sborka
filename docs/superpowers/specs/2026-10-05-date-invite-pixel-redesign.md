@@ -4,19 +4,20 @@
 APPROVED DESIGN INPUT. The visual reference supplied by the owner and the approved JSON in chat are the source of truth for this redesign.
 
 ## Goal
-Rebuild the existing Date Invite mobile site to match the approved warm romantic sunset reference as closely as practical while preserving the existing direct Telegram delivery to `@DanilVlasenk`.
+Rebuild the existing Date Invite mobile site to match the approved warm romantic sunset reference as closely as practical while preserving direct Telegram delivery to `@DanilVlasenk`.
 
 ## Scope
-Three product states:
+Two product states:
 1. Invitation hero + question card.
-2. Alternate-date picker.
-3. Positive confirmation + Telegram send.
+2. Positive confirmation + Telegram send.
+
+The alternate-date calendar flow is removed completely. There are no dates anywhere in the product.
 
 No backend, database, auth, analytics, cookies, or tracking.
 
 ## Source of Truth Priority
 1. Approved visual reference image (941×1672, ~9:16).
-2. Approved JSON design spec from owner.
+2. Approved JSON design spec from owner, except date-related UI now explicitly removed by owner decision.
 3. Existing functional Telegram behavior.
 4. Existing implementation only where it does not conflict with 1–3.
 
@@ -81,7 +82,7 @@ Body preference: Manrope / Nunito Sans / system sans-serif.
 No font files may be distributed. Use web-safe or remote CSS font imports only if the runtime remains dependency-free; otherwise use system fallbacks that preserve metrics as closely as possible.
 
 ## Assets
-Three clean assets are required, derived visually from the approved reference but without baked-in UI text:
+Two clean assets are required, derived visually from the approved reference but without baked-in UI text:
 
 ### Hero
 Photorealistic warm terrace at sunset with:
@@ -92,13 +93,6 @@ Photorealistic warm terrace at sunset with:
 - two mugs
 - no people
 - golden-hour glow
-
-### Date illustration
-Soft watercolor/vector hybrid:
-- desk calendar
-- steaming mug
-- small leaves/flowers
-- sparse heart doodles
 
 ### Success illustration
 Soft watercolor/vector hybrid:
@@ -121,28 +115,14 @@ These are image assets, not CSS illustrations.
 - Center overlapping circular heart tab, 64px.
 - Question: `Пойдёшь со мной\nна свидание?`.
 - Primary button: `Да ❤️`, 72px high, full width, arrow icon.
-- Secondary button: `Давай выберем другой день`, 72px high, calendar icon.
+- Secondary button: `Давай выберем другой день`, 72px high, calendar/date icon removed; use a simple arrow or Telegram-style directional icon.
 
-## Screen 2 — Date Picker
-- Cream background, 24px padding.
-- Back button.
-- Date illustration near top, approx 190px visual height.
-- Title: `Давай выберем\nдругой день?`.
-- Subtitle: `Когда тебе будет удобно,\nа я всё красиво придумаю ✨`.
-- Four date cards in one row using the reference geometry.
-- The literal April dates in the reference are visual sample data only. Production renders the next 4 available calendar dates based on the visitor's local date while preserving width, line breaks, and selected-card styling.
-- Selected date uses accent background and white text.
-- `Или предложи свой вариант` label.
-- Native/custom date input styled like the reference.
-- `Продолжить` primary button.
-- Continue opens Telegram with the selected date prefilled.
+Secondary button behavior:
+- Opens Telegram directly to `@DanilVlasenk`.
+- Prefilled text must be exactly: `Давай выберем другой день 🙂`.
+- No calendar, no date picker, no date input, no intermediate screen.
 
-Date message format:
-`Давай выберем другой день 🙂 Мне подходит {day} {month}.`
-
-If the custom date input is used, that value replaces the quick-date selection.
-
-## Screen 3 — Success
+## Screen 2 — Success
 - Cream background.
 - Success illustration approx 300px visual height.
 - Title: `Да ❤️\nЯ согласна.`.
@@ -153,16 +133,13 @@ If the custom date input is used, that value replaces the quick-date selection.
 - CTA uses current direct Telegram deep-link to `DanilVlasenk` and prefilled text. No auto-send.
 
 ## State Model
-Replace the old sealed → letter → choice flow with the reference-driven states:
+Replace the old sealed → letter → choice flow with two reference-driven states:
 - `invitation`
-- `date_picker`
 - `success`
 
-Transitions:
+Transitions/actions:
 - invitation + YES → success
-- invitation + LATER → date_picker
-- date_picker + BACK → invitation
-- date_picker + CONTINUE → Telegram deeplink with selected date
+- invitation + LATER → Telegram deeplink with `Давай выберем другой день 🙂`
 - success + SEND → Telegram deeplink with accepted-response text
 
 Invalid/repeated events keep current state.
@@ -181,6 +158,7 @@ Invalid/repeated events keep current state.
 - Preserve current Render Static Site architecture.
 - Preserve `@DanilVlasenk` delivery.
 - Do not add backend.
+- Do not add date-related UI or logic.
 - Do not add new unrelated sections.
 - Do not silently rewrite owner-approved copy.
 - Maintain `noindex,nofollow`.
@@ -189,7 +167,8 @@ Invalid/repeated events keep current state.
 
 ## Acceptance
 ### Visual
-- Very high similarity to the approved reference.
+- Very high similarity to the approved reference, using the left invitation composition and lower-right success composition as the visual source.
+- The upper-right date-picker panel from the reference is intentionally excluded.
 - Hero crop feels like reference at 390px viewport.
 - Card silhouette, spacing, radii, button heights and headline positions match reference closely.
 - Review at 320, 360, 390, 412 and 430px.
@@ -198,6 +177,6 @@ Invalid/repeated events keep current state.
 
 ### Functional
 - YES: invitation → success → Telegram `@DanilVlasenk` with `Да ❤️ Я согласна. Посмотрим, что ты придумал 😌`.
-- LATER: invitation → date picker → select quick/custom date → Telegram `@DanilVlasenk` with chosen date.
-- Back from date picker returns to invitation.
+- LATER: invitation → Telegram `@DanilVlasenk` with `Давай выберем другой день 🙂`.
+- No dates appear anywhere.
 - No message is sent automatically.
