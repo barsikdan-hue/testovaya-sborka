@@ -58,18 +58,10 @@ for (const button of answerButtons) {
   button.addEventListener('click', () => dispatch({ type: 'ANSWER', value: button.dataset.answer }));
 }
 
-sendButton.addEventListener('click', async () => {
+sendButton.addEventListener('click', () => {
   const text = createResponseText(state.answer, inviteConfig);
-  const result = await deliverResponse(text);
-
-  const messages = {
-    shared: 'Готово. Теперь Данил узнает твой ответ 🙂',
-    copied: 'Ответ скопирован. Просто вставь его в ваш чат с Данилом.',
-    cancelled: 'Ничего не отправилось. Ответ всё ещё здесь, можно попробовать ещё раз.',
-    manual: 'Автоотправка недоступна. Скопируй текст выше и отправь Данилу в ваш чат.'
-  };
-
-  statusNode.textContent = messages[result];
+  statusNode.textContent = 'Открываю Telegram-чат с Данилом…';
+  deliverResponse(text);
 });
 
 render();
