@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="theme-color" content="#f7efe9">
+    <meta name="description" content="Небольшое личное приглашение на свидание.">
+    <title>Для тебя 💌</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <main class="app-shell" aria-label="Личное приглашение">
+      <section class="screen is-active" data-screen="sealed" tabindex="-1">
+        <p class="eyebrow" id="eyebrow">одно маленькое приглашение</p>
+        <h1 id="intro-title">Для тебя кое-что есть</h1>
+        <p class="lead">Открывается только одним способом.</p>
+
+        <button class="envelope-button" id="open-invite" type="button" aria-label="Открыть приглашение">
+          <span class="envelope" aria-hidden="true">
+            <span class="envelope-back"></span>
+            <span class="envelope-paper">💌</span>
+            <span class="envelope-front"></span>
+            <span class="envelope-flap"></span>
+            <span class="seal">♡</span>
+          </span>
+          <span class="button-caption">Открыть</span>
+        </button>
+      </section>
+
+      <section class="screen" data-screen="letter" tabindex="-1" hidden>
+        <p class="eyebrow">лично от Данила</p>
+        <div class="letter-card">
+          <span class="tiny-mark" aria-hidden="true">✦</span>
+          <h2 id="letter-title">Хочу украсть у суеты один вечер</h2>
+          <p id="letter-text"></p>
+          <p class="signature">Данил</p>
+        </div>
+        <button class="primary-button" id="continue-invite" type="button">И что дальше?</button>
+      </section>
+
+      <section class="screen" data-screen="choice" tabindex="-1" hidden>
+        <p class="eyebrow">самый важный вопрос</p>
+        <h2 id="question">Пойдёшь со мной на свидание?</h2>
+        <p class="lead compact">Без правильного ответа. Только как тебе хочется.</p>
+        <div class="choice-grid" role="group" aria-label="Выбрать ответ">
+          <button class="choice-button choice-primary" type="button" data-answer="yes">
+            <span>Да ❤️</span>
+            <small>Звучит как хороший план</small>
+          </button>
+          <button class="choice-button" type="button" data-answer="later">
+            <span>Давай выберем другой день</span>
+            <small>Идея нравится, но время обсудим</small>
+          </button>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="result" tabindex="-1" hidden>
+        <div class="result-symbol" aria-hidden="true">♡</div>
+        <p class="eyebrow">ответ принят вселенной</p>
+        <h2 id="result-title"></h2>
+        <p class="lead" id="result-text"></p>
+
+        <div class="response-card">
+          <p class="response-label">Сообщение для Данила</p>
+          <p id="response-preview"></p>
+        </div>
+
+        <button class="primary-button" id="send-response" type="button">Отправить Данилу</button>
+        <p class="share-status" id="share-status" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <footer class="footer-note">Сделано без регистрации, слежки и неловких анкет.</footer>
+
+    <noscript>
+      <div class="noscript">Для этого приглашения нужен JavaScript. Включи его и обнови страницу.</div>
+    </noscript>
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
