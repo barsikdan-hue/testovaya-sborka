@@ -31,6 +31,7 @@ test('success card overlays approved response text',async()=>{
   assert.match(html,/class="success-message-overlay"/);
   assert.match(html,/Да ❤️ Я согласна\. Посмотрим, что ты придумал 😌/);
   assert.match(css,/\.success-message-overlay/);
+  assert.match(html,/class="success-subtitle-overlay"[^>]*>Посмотрим, что ты придумал 😌<\/p>/);
 });
 
 test('CSS pins reference canvas and reduced motion',async()=>{
